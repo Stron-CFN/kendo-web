@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>部活動管理システム</title>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #000000; background-color: #ffffff; margin: 0; padding: 0; }
+        header { width: 100%; height: 60px; background-color: #ffffff; border-bottom: 2px solid #000000; position: fixed; top: 0; left: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; box-sizing: border-box; z-index: 1100; }
+        .header-title { font-weight: bold; font-size: 1.2rem; }
+        .header-controls { display: flex; align-items: center; gap: 15px; }
+        .year-select-wrapper { display: flex; align-items: center; gap: 10px; }
+        .year-select-wrapper select { width: auto; padding: 5px 10px; font-weight: bold; }
+        .sync-btn { background-color: #e0e0e0; color: #333; border: 1px solid #000; padding: 5px 15px; cursor: pointer; font-weight: bold; font-size: 0.85rem; transition: all 0.3s; }
+        .sync-needed { background-color: #ff4d4d !important; color: #ffffff !important; border: 1px solid #ff4d4d; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
+        .app-container { display: flex; margin-top: 60px; }
+        #sidebar { width: 250px; background-color: #ffffff; border-right: 2px solid #000000; height: calc(100vh - 60px); position: fixed; left: 0; top: 60px; transition: transform 0.3s ease; z-index: 1000; overflow-y: auto; }
+        #sidebar.collapsed { transform: translateX(-210px); }
+        .toggle-btn { background: #000000; color: #ffffff; border: none; width: 100%; padding: 10px; cursor: pointer; font-weight: bold; text-align: right; }
+        #sidebar ul { list-style: none; padding: 0; margin: 0; }
+        #sidebar li a { display: block; padding: 15px 20px; color: #000000; text-decoration: none; border-bottom: 1px solid #e0e0e0; font-weight: bold; }
+        #sidebar li a:hover { background-color: #f0f0f0; }
+        #main-content { margin-left: 250px; padding: 40px; flex-grow: 1; transition: margin-left 0.3s ease; max-width: 800px; box-sizing: border-box; }
+        #main-content.expanded { margin-left: 40px; }
+        h1, h2, h3 { border-bottom: 2px solid #000000; padding-bottom: 5px; }
+        .section { display: none; }
+        .section.active { display: block; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        input, select, textarea { width: 100%; padding: 8px; border: 1px solid #000000; background-color: #ffffff; color: #000000; box-sizing: border-box; }
+        button.submit-btn { background-color: #000000; color: #ffffff; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold; margin-top: 10px; }
+        button.submit-btn:hover { background-color: #333333; }
+        .accordion { border: 1px solid #000000; margin-bottom: 10px; }
+        .accordion-header { background-color: #f0f0f0; padding: 10px; cursor: pointer; font-weight: bold; border-bottom: 1px solid #000000; }
+        .accordion-content { padding: 15px; display: none; white-space: pre-wrap; }
+        .calendar-placeholder { width: 100%; height: 320px; border: 2px solid #000000; display: flex; flex-direction: column; justify-content: center; align-items: center; margin: 20px 0; background-color: #fafafa; }
+        .calendar-title { font-size: 1.4rem; font-weight: bold; margin-bottom: 15px; }
+        .calendar-grid-sim { font-family: monospace; font-size: 1.1rem; line-height: 1.6; text-align: center; }
+        .info-box { border: 1px solid #000000; padding: 15px; min-height: 100px; background-color: #ffffff; margin-top: 10px; }
+        .notice-item { border-bottom: 1px dashed #ccc; padding: 8px 0; font-size: 0.95rem; }
+        .notice-item:last-child { border-bottom: none; }
+        .notice-date { font-size: 0.8rem; color: #666; margin-right: 10px; }
+        .year-badge { background-color: #000000; color: #ffffff; padding: 2px 6px; font-size: 0.75rem; font-weight: bold; margin-right: 5px; }
+        .rank-input-box { background-color: #f9f9f9; border: 1px dashed #000000; padding: 10px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-title">部活動管理システム</div>
+        <div class="header-controls">
+            <button id="cloud-sync-btn" class="sync-btn" onclick="syncWithCloud()">クラウドと同期</button>
+            <div class="year-select-wrapper">
+                <label for="global-year-select" style="margin:0; display:inline;">対象年度:</label>
+                <select id="global-year-select" onchange="changeSystemYear()"></select>
+            </div>
+        </div>
+    </header>
+<div class="app-container">
+        <div id="sidebar">
+            <button class="toggle-btn" onclick="toggleSidebar()">メニュー ☰</button>
+            <ul>
+                <li><a href="#" onclick="showSection('home')">ホーム</a></li>
+                <li><a href="#" onclick="showSection('attendance')">出欠確認</a></li>
+                <li><a href="#" onclick="showSection('roster')">部員名簿</a></li>
+                <li><a href="#" onclick="showSection('meeting')">会合記録</a></li>
+                <li><a href="#" onclick="showSection('practice')">稽古状況</a></li>
+                <li><a href="#" onclick="showSection('schedule')">スケジュール</a></li>
+                <li><a href="#" onclick="showSection('tournament')">大会結果</a></li>
+                <li><a href="#" onclick="showSection('exam')">審査結果</a></li>
+            </ul>
+        </div>
+
+        <div id="main-content">
+            <div id="home" class="section active">
+                <h1>ホーム <span id="home-year-title" style="font-size:1.2rem; font-weight:normal;"></span></h1>
+                <h3>今月のカレンダー</h3>
+                <div class="calendar-placeholder" id="calendar-area"></div>
+                <h3>お知らせ（自動通知連動）</h3>
+                <div id="home-notice" class="info-box"><div class="notice-item">現在、連絡事項はありません。</div></div>
+            </div>
+
+            <div id="attendance" class="section">
+                <h1>出欠連絡</h1>
+                <div class="form-group"><label>部員名</label><select id="attend-name" class="member-select"></select></div>
+                <div class="form-group">
+                    <label>区分</label>
+                    <select id="attend-status" onchange="toggleEarlyLeaveTime()"><option value="欠席">欠席</option><option value="早退">早退</option></select>
+                </div>
+                <div class="form-group" id="early-leave-group" style="display: none;"><label>早退予定時刻</label><input type="time" id="early-leave-time"></div>
+                <div class="form-group"><label>備考欄</label><textarea id="attend-remark" rows="3" placeholder="理由などをご記入ください"></textarea></div>
+                <button class="submit-btn" onclick="submitAttendance()">送信</button>
+            </div>
+
+            <div id="roster" class="section">
+                <h1>部員名簿</h1>
+                <h3>新入部員登録</h3>
+                <div class="form-group"><label>学年</label><select id="new-grade"><option value="1">1年</option><option value="2">2年</option><option value="3">3年</option></select></div>
+                <div class="form-group"><label>名前</label><input type="text" id="new-name" placeholder="山田 太郎"></div>
+                <div class="form-group"><label>性別</label><select id="new-gender"><option value="男子">男子</option><option value="女子">女子</option></select></div>
+                <button class="submit-btn" onclick="registerMember()">登録</button>
+                <h3>三役登録</h3>
+                <div class="form-group"><label>役職</label><select id="role-title"><option value="主将">主将</option><option value="副主将">副主将</option><option value="主務">主務</option></select></div>
+                <div class="form-group"><label>部員選択</label><select id="role-member-select" class="member-select"></select></div>
+                <button class="submit-btn" id="role-submit" onclick="registerRole()">役職確定</button>
+                <div id="role-display" style="margin-top:10px; font-weight:bold;"></div>
+                <h3>部員数・名簿一覧</h3><div id="roster-list"></div>
+            </div>
+
+            <div id="meeting" class="section">
+                <h1>会合記録</h1>
+                <div class="form-group"><label>日付</label><input type="date" id="meeting-date"></div>
+                <div class="form-group"><label>記録内容</label><textarea id="meeting-content" rows="5" placeholder="会合の内容を記入してください"></textarea></div>
+                <button class="submit-btn" onclick="saveMeeting()">記録保存</button>
+                <h3>過去の会合記録</h3><div id="meeting-history"></div>
+            </div>
+<div id="practice" class="section">
+                <h1>稽古状況</h1>
+                <p><strong>通常稽古日:</strong> 毎週火曜日・金曜日</p>
+                <div style="border: 1px solid #000; padding: 10px; margin-bottom: 20px;">
+                    <h3>次回稽古日：<span id="next-practice-date" style="color:#000000;">計算中...</span></h3>
+                    <p><strong>欠席予定者:</strong> <span id="practice-absent">なし</span></p>
+                    <p><strong>早退予定者:</strong> <span id="practice-leave">なし</span></p>
+                </div>
+                <h3>特別練習の追加</h3>
+                <div class="form-group"><label>特別練習 日程</label><input type="date" id="special-practice-date"></div>
+                <div class="form-group"><label>内容・場所</label><input type="text" id="special-practice-info" placeholder="〇〇体育館 合同稽古"></div>
+                <button class="submit-btn" onclick="addSpecialPractice()">スケジュールへ反映</button>
+            </div>
+
+            <div id="schedule" class="section">
+                <h1>スケジュール</h1>
+                <h3>大会・審査予定登録</h3>
+                <div class="form-group"><label>区分</label><select id="sched-type"><option value="大会">大会</option><option value="審査">審査</option></select></div>
+                <div class="form-group"><label>日程</label><input type="date" id="sched-date"></div>
+                <div class="form-group"><label>会場</label><input type="text" id="sched-venue" placeholder="〇〇武道館"></div>
+                <div class="form-group"><label>集合時刻</label><input type="time" id="sched-time"></div>
+                <button class="submit-btn" onclick="saveSchedule()">予定を記録</button>
+                
+                <h3 style="margin-top: 30px;">登録済みスケジュール一覧</h3>
+                <div id="schedule-list" style="border:1px solid #000; padding:15px; background-color:#fafafa;"></div>
+            </div>
+
+            <div id="tournament" class="section">
+                <h1>大会結果</h1>
+                <div class="form-group"><label>大会名</label><input type="text" id="tourney-name" placeholder="春季大会"></div>
+                <div class="form-group"><label>試合（回戦）</label><input type="text" id="tourney-match-count" placeholder="例: 1回戦、準々決勝など"></div>
+                <h3>【個人戦】</h3>
+                <div class="form-group"><label>自校選手</label><select id="indiv-player" class="member-select"></select></div>
+                <div class="form-group"><label>相手選手名</label><input type="text" id="indiv-opp-name"></div>
+                <div class="form-group"><label>相手学校名</label><input type="text" id="indiv-opp-school"></div>
+                <div class="form-group"><label>取得本数</label><input type="text" id="indiv-score"></div>
+                <div class="form-group">
+                    <label>勝敗</label>
+                    <select id="indiv-result" onchange="toggleIndivFinalRankForm()"><option value="勝ち〇">勝ち〇</option><option value="負け✖">負け✖</option><option value="不戦勝●">不戦勝●</option></select>
+                </div>
+                <div id="indiv-rank-box" class="rank-input-box" style="display:none;"><label>最終順位（個人戦）</label><input type="text" id="indiv-final-rank" placeholder="例: ベスト16など"></div>
+                <h3>【団体戦】</h3>
+                <div class="form-group"><label>対戦相手学校名</label><input type="text" id="team-opp-school"></div>
+                <div id="team-positions"></div>
+                <div class="form-group" style="margin-top:15px;">
+                    <label>団体戦 最終的な勝敗</label>
+                    <select id="team-total-result" onchange="toggleTeamFinalRankForm()"><option value="勝ち〇">勝ち〇</option><option value="負け✖">負け✖</option></select>
+                </div>
+                <div id="team-rank-box" class="rank-input-box" style="display:none;"><label>最終順位（団体戦）</label><input type="text" id="team-final-rank" placeholder="例: 準優勝など"></div>
+                <button class="submit-btn" onclick="saveTournament()">大会結果を保存</button>
+                <h3>過去の大会結果</h3><div id="tourney-history"></div>
+            </div>
+
+            <div id="exam" class="section">
+                <h1>審査結果</h1>
+                <div class="form-group"><label>審査名</label><input type="text" id="exam-name" placeholder="第一回昇段審査"></div>
+                <div class="form-group"><label>会場名</label><input type="text" id="exam-venue" placeholder="県立武道館"></div>
+                <hr style="border: 0; border-top: 1px dashed #000; margin: 20px 0;">
+                <div class="form-group"><label>受審者</label><select id="exam-player" class="member-select"></select></div>
+                <div class="form-group"><label>受審級・段 (手入力)</label><input type="text" id="exam-rank" placeholder="初段 など"></div>
+                <div class="form-group">
+                    <label>合否結果</label>
+                    <select id="exam-result"><option value="合格〇">合格〇</option><option value="形不合格▲">形不合格▲</option><option value="実技不合格▼">実技不合格▼</option><option value="学科不合格▽">学科不合格▽</option><option value="不合格✖">不合格✖</option></select>
+                </div>
+                <button class="submit-btn" onclick="saveExam()">審査結果を保存</button>
+                <h3>過去の審査結果</h3><div id="exam-history"></div>
+            </div>
+        </div>
+    </div>
+<div id="practice" class="section">
+                <h1>稽古状況</h1>
+                <p><strong>通常稽古日:</strong> 毎週火曜日・金曜日</p>
+                <div style="border: 1px solid #000; padding: 10px; margin-bottom: 20px;">
+                    <h3>次回稽古日：<span id="next-practice-date" style="color:#000000;">計算中...</span></h3>
+                    <p><strong>欠席予定者:</strong> <span id="practice-absent">なし</span></p>
+                    <p><strong>早退予定者:</strong> <span id="practice-leave">なし</span></p>
+                </div>
+                <h3>特別練習の追加</h3>
+                <div class="form-group"><label>特別練習 日程</label><input type="date" id="special-practice-date"></div>
+                <div class="form-group"><label>内容・場所</label><input type="text" id="special-practice-info" placeholder="〇〇体育館 合同稽古"></div>
+                <button class="submit-btn" onclick="addSpecialPractice()">スケジュールへ反映</button>
+            </div>
+
+            <div id="schedule" class="section">
+                <h1>スケジュール</h1>
+                <h3>大会・審査予定登録</h3>
+                <div class="form-group"><label>区分</label><select id="sched-type"><option value="大会">大会</option><option value="審査">審査</option></select></div>
+                <div class="form-group"><label>日程</label><input type="date" id="sched-date"></div>
+                <div class="form-group"><label>会場</label><input type="text" id="sched-venue" placeholder="〇〇武道館"></div>
+                <div class="form-group"><label>集合時刻</label><input type="time" id="sched-time"></div>
+                <button class="submit-btn" onclick="saveSchedule()">予定を記録</button>
+                
+                <h3 style="margin-top: 30px;">登録済みスケジュール一覧</h3>
+                <div id="schedule-list" style="border:1px solid #000; padding:15px; background-color:#fafafa;"></div>
+            </div>
+
+            <div id="tournament" class="section">
+                <h1>大会結果</h1>
+                <div class="form-group"><label>大会名</label><input type="text" id="tourney-name" placeholder="春季大会"></div>
+                <div class="form-group"><label>試合（回戦）</label><input type="text" id="tourney-match-count" placeholder="例: 1回戦、準々決勝など"></div>
+                <h3>【個人戦】</h3>
+                <div class="form-group"><label>自校選手</label><select id="indiv-player" class="member-select"></select></div>
+                <div class="form-group"><label>相手選手名</label><input type="text" id="indiv-opp-name"></div>
+                <div class="form-group"><label>相手学校名</label><input type="text" id="indiv-opp-school"></div>
+                <div class="form-group"><label>取得本数</label><input type="text" id="indiv-score"></div>
+                <div class="form-group">
+                    <label>勝敗</label>
+                    <select id="indiv-result" onchange="toggleIndivFinalRankForm()"><option value="勝ち〇">勝ち〇</option><option value="負け✖">負け✖</option><option value="不戦勝●">不戦勝●</option></select>
+                </div>
+                <div id="indiv-rank-box" class="rank-input-box" style="display:none;"><label>最終順位（個人戦）</label><input type="text" id="indiv-final-rank" placeholder="例: ベスト16など"></div>
+                <h3>【団体戦】</h3>
+                <div class="form-group"><label>対戦相手学校名</label><input type="text" id="team-opp-school"></div>
+                <div id="team-positions"></div>
+                <div class="form-group" style="margin-top:15px;">
+                    <label>団体戦 最終的な勝敗</label>
+                    <select id="team-total-result" onchange="toggleTeamFinalRankForm()"><option value="勝ち〇">勝ち〇</option><option value="負け✖">負け✖</option></select>
+                </div>
+                <div id="team-rank-box" class="rank-input-box" style="display:none;"><label>最終順位（団体戦）</label><input type="text" id="team-final-rank" placeholder="例: 準優勝など"></div>
+                <button class="submit-btn" onclick="saveTournament()">大会結果を保存</button>
+                <h3>過去の大会結果</h3><div id="tourney-history"></div>
+            </div>
+
+            <div id="exam" class="section">
+                <h1>審査結果</h1>
+                <div class="form-group"><label>審査名</label><input type="text" id="exam-name" placeholder="第一回昇段審査"></div>
+                <div class="form-group"><label>会場名</label><input type="text" id="exam-venue" placeholder="県立武道館"></div>
+                <hr style="border: 0; border-top: 1px dashed #000; margin: 20px 0;">
+                <div class="form-group"><label>受審者</label><select id="exam-player" class="member-select"></select></div>
+                <div class="form-group"><label>受審級・段 (手入力)</label><input type="text" id="exam-rank" placeholder="初段 など"></div>
+                <div class="form-group">
+                    <label>合否結果</label>
+                    <select id="exam-result"><option value="合格〇">合格〇</option><option value="形不合格▲">形不合格▲</option><option value="実技不合格▼">実技不合格▼</option><option value="学科不合格▽">学科不合格▽</option><option value="不合格✖">不合格✖</option></select>
+                </div>
+                <button class="submit-btn" onclick="saveExam()">審査結果を保存</button>
+                <h3>過去の審査結果</h3><div id="exam-history"></div>
+            </div>
+        </div>
+    </div>
+<script>
+        // 👑 【帰宅後の設定】ここにFirebaseのURLアドレスを入れるだけで連動します！
+        const GOOGLE_FIREBASE_URL = "https://index-stron09-default-rtdb.firebaseio.com/";
+        
+        let isCloudEnabled = false;
+        let cloudDB = null;
+        if (GOOGLE_FIREBASE_URL !== "https://index-stron09-default-rtdb.firebaseio.com/" && GOOGLE_FIREBASE_URL.trim() !== "") {
+            firebase.initializeApp({ databaseURL: GOOGLE_FIREBASE_URL });
+            cloudDB = firebase.database();
+            isCloudEnabled = true;
+        }
+
+        const START_REIWA = 8;
+        const END_REIWA = 30; // 令和30年度まで対応
+        let currentSelectedYear = START_REIWA;
+        let db = {};
+        let isModified = false;
+
+        function setModified(status) {
+            isModified = status;
+            const btn = document.getElementById('cloud-sync-btn');
+            if (status) { btn.classList.add('sync-needed'); btn.innerText = "クラウドと同期 (未同期あり)"; } 
+            else { btn.classList.remove('sync-needed'); btn.innerText = "クラウドと同期完了"; }
+        }
+        function saveToLocalStorage() { localStorage.setItem('bukatsu_db', JSON.stringify(db)); setModified(true); }
+        function syncWithCloud() {
+            if (!isCloudEnabled) { alert("Googleのアドレスが未設定です。最下部のGOOGLE_FIREBASE_URLにURLを貼り付けてください。"); return; }
+            const btn = document.getElementById('cloud-sync-btn'); btn.innerText = "同期中...";
+            cloudDB.ref('bukatsu_data').set(db)
+                .then(() => { setModified(false); alert("クラウドとの高速同期が完了しました！"); })
+                .catch((err) => { console.error(err); alert("同期に失敗しました。"); btn.innerText = "同期失敗"; });
+        }
+        function initDatabaseForYear(rYear) { if (!db[rYear]) { db[rYear] = { members: [], roles: { "主将": "", "副主将": "", "主務": "" }, attendanceLog: [], meetings: [], specialPractices: [], tournaments: [], exams: [], notices: [] }; } }
+        function data() { return db[currentSelectedYear]; }
+        
+        function initYearSelector() { 
+            const select = document.getElementById('global-year-select'); 
+            let html = ""; 
+            for (let rYear = START_REIWA; rYear <= END_REIWA; rYear++) { 
+                html += `<option value="${rYear}">令和${rYear}年度</option>`; 
+                initDatabaseForYear(rYear); 
+            } 
+            select.innerHTML = html; 
+            currentSelectedYear = START_REIWA; 
+        }
+
+        function loadInitialData() {
+            const local = localStorage.getItem('bukatsu_db'); if (local) { db = JSON.parse(local); setModified(false); changeSystemYear(); }
+            if (isCloudEnabled) { cloudDB.ref('bukatsu_data').once('value').then((snap) => { if (snap.exists()) { db = snap.val(); localStorage.setItem('bukatsu_db', JSON.stringify(db)); setModified(false); changeSystemYear(); } }); }
+        }
+        function changeSystemYear() { currentSelectedYear = parseInt(document.getElementById('global-year-select').value); document.getElementById('home-year-title').innerText = `（令和${currentSelectedYear}年度データ）`; updateNoticeDOM(); updateRosterDOM(); updatePracticeAbsentDOM(); updateScheduleDOM(); refreshHistoryDOMs(); updateNextPracticeDate(); }
+        function generateMonthlyCalendar() {
+            const today = new Date(); const year = today.getFullYear(); const month = today.getMonth() + 1; const calendarArea = document.getElementById('calendar-area');
+            let simGrid = "日  月  火  水  木  金  土\n"; let dayCounter = 1; const firstDayIndex = new Date(year, month - 1, 1).getDay(); const totalDays = new Date(year, month, 0).getDate();
+            for (let i = 0; i < 6; i++) {
+                let row = ""; for (let j = 0; j < 7; j++) { if (i === 0 && j < firstDayIndex) row += "    "; else if (dayCounter > totalDays) row += "    "; else { row += String(dayCounter).padStart(2, ' ') + ((j === 2 || j === 5) ? "* " : "  "); dayCounter++; } }
+                simGrid += row + "\n"; if (dayCounter > totalDays) break;
+            }
+            calendarArea.innerHTML = `<div class="calendar-title">${year}年 ${month}月度 カレンダー</div><pre class="calendar-grid-sim">${simGrid}</pre>`;
+        }
+        function updateNextPracticeDate() {
+            const today = new Date(); let next = new Date(today); for (let i = 0; i < 8; i++) { const day = next.getDay(); if (day === 2 || day === 5) break; next.setDate(next.getDate() + 1); }
+            const dayNames = ["日", "月", "火", "水", "木", "金", "土"]; document.getElementById('next-practice-date').innerText = `${next.getFullYear()}/${String(next.getMonth() + 1).padStart(2, '0')}/${String(next.getDate()).padStart(2, '0')} (${dayNames[next.getDay()]})`;
+        }
+        function addNotice(msg) { const now = new Date(); const time = `${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`; data().notices.unshift({ time, msg }); updateNoticeDOM(); saveToLocalStorage(); }
+        function updateNoticeDOM() { const box = document.getElementById('home-notice'); if(!data().notices || data().notices.length === 0) { box.innerHTML = '<div class="notice-item">現在、連絡事項はありません。</div>'; return; } box.innerHTML = data().notices.map(n => `<div class="notice-item"><span class="year-badge">R${currentSelectedYear}</span><span class="notice-date">[${n.time}]</span>${n.msg}</div>`).join(''); }
+        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); document.getElementById('main-content').classList.toggle('expanded'); }
+        function showSection(id) { document.querySelectorAll('.section').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+        function toggleEarlyLeaveTime() { const status = document.getElementById('attend-status').value; document.getElementById('early-leave-group').style.display = (status === '早退') ? 'block' : 'none'; }
+        function toggleIndivFinalRankForm() { const res = document.getElementById('indiv-result').value; document.getElementById('indiv-rank-box').style.display = (res === '負け✖') ? 'block' : 'none'; }
+        function toggleTeamFinalRankForm() { const res = document.getElementById('team-total-result').value; document.getElementById('team-rank-box').style.display = (res === '負け✖') ? 'block' : 'none'; }
+        function submitAttendance() {
+            const name = document.getElementById('attend-name').value; const status = document.getElementById('attend-status').value; const time = document.getElementById('early-leave-time').value; const remark = document.getElementById('attend-remark').value; if(!name) return alert("部員を選択してください");
+            data().attendanceLog.push({ name, status, time, remark, date: new Date().toLocaleDateString() }); let logMsg = `【出欠連絡】${name}さんが「${status}」を送信しました。`; if(status === '早退' && time) logMsg += ` (${time})`; if(remark) logMsg += ` [${remark}]`; addNotice(logMsg); updatePracticeAbsentDOM(); alert("送信しました");
+        }
+        function updatePracticeAbsentDOM() { const abs = data().attendanceLog.filter(a => a.status === '欠席').map(a => a.name); const lvs = data().attendanceLog.filter(a => a.status === '早退').map(a => `${a.name}(${a.time})`); document.getElementById('practice-absent').innerText = abs.length > 0 ? abs.join(', ') : "なし"; document.getElementById('practice-leave').innerText = lvs.length > 0 ? lvs.join(', ') : "なし"; }
+        function registerMember() { const grade = parseInt(document.getElementById('new-grade').value); const name = document.getElementById('new-name').value; const gender = document.getElementById('new-gender').value; if(!name) return alert("入力不足"); data().members.push({ id: Date.now(), name, grade, gender }); addNotice(`【名簿】新入部員：${grade}年 ${name}`); updateRosterDOM(); }
+        function registerRole() { const title = document.getElementById('role-title').value; const name = document.getElementById('role-member-select').value; if(!name) return alert("選択不足"); data().roles[title] = name; addNotice(`【名簿】役職：[${title} : ${name}]`); updateRosterDOM(); }
+        function updateRosterDOM() {
+            document.querySelectorAll('.member-select').forEach(sel => { sel.innerHTML = '<option value="">-- 選択 --</option>' + data().members.map(m => `<option value="${m.name}">${m.name} (${m.grade}年)</option>`).join(''); });
+            let rTxt = "【現在の三役】<br>"; for(let k in data().roles) rTxt += `${k}: ${data().roles[k] || '未登録'}<br>`; document.getElementById('role-display').innerHTML = rTxt;
+            let rHtml = ""; [1, 2, 3].forEach(g => { const list = data().members.filter(m => m.grade === g); rHtml += `<h4>■ ${g}年生 (${list.length}名)</h4><ul>` + list.map(m => `<li>${m.name} (${m.gender})</li>`).join('') + `</ul>`; }); document.getElementById('roster-list').innerHTML = rHtml;
+        }
+        function saveMeeting() { const date = document.getElementById('meeting-date').value; const content = document.getElementById('meeting-content').value; if(!date || !content) return alert("入力不足"); data().meetings.push({ date, content }); addNotice(`【会合】${date} 作成`); refreshHistoryDOMs(); }
+        function addSpecialPractice() { const date = document.getElementById('special-practice-date').value; const info = document.getElementById('special-practice-info').value; if(!date) return alert("日付不足"); data().specialPractices.push({ date, info: `特練: ${info}` }); addNotice(`【練習】特練追加: ${date}`); updateScheduleDOM(); }
+        function saveSchedule() { const type = document.getElementById('sched-type').value; const date = document.getElementById('sched-date').value; const venue = document.getElementById('sched-venue').value; const time = document.getElementById('sched-time').value; if(!date) return alert("日付不足"); data().specialPractices.push({ date, info: `【${type}】 場所:${venue} / 集合:${time}` }); addNotice(`【日程】${date} [${type}]`); updateScheduleDOM(); alert("予定を登録しました"); }
+        function updateScheduleDOM() { 
+            let html = ""; 
+            if (!data().specialPractices || data().specialPractices.length === 0) {
+                html = "<p style='color:#666;'>登録された予定はありません。</p>";
+            } else {
+                html = "<ul>";
+                data().specialPractices.sort((a,b) => new Date(a.date) - new Date(b.date)).forEach(s => { 
+                    html += `<li><strong>${s.date}</strong> - ${s.info}</li>`; 
+                }); 
+                html += "</ul>";
+            }
+            document.getElementById('schedule-list').innerHTML = html; 
+        }
+        const positions = ["先鋒", "次鋒", "中堅", "副将", "大将"];
+        function initTeamForm() { let html = ""; positions.forEach(p => { html += `<div style="border:1px dashed #000; padding:5px; margin-bottom:5px;"><label>${p}</label>選手: <select class="member-select team-player-select"></select><input type="checkbox" onchange="toggleNonePlayer(this)"> なし<br>相手: <input type="text" class="team-opp-name"> 本数: <input type="text" class="team-score"> 勝敗: <select class="team-res"><option value="勝ち〇">勝ち〇</option><option value="引き分け△">引き分け△</option><option value="負け✖">負け✖</option></select></div>`; }); document.getElementById('team-positions').innerHTML = html; }
+        function toggleNonePlayer(chk) { const sel = chk.previousElementSibling; if(chk.checked) { sel.value = ""; sel.disabled = true; } else { sel.disabled = false; } }
+        function saveTournament() {
+            const name = document.getElementById('tourney-name').value; const matchCount = document.getElementById('tourney-match-count').value; const indivRes = document.getElementById('indiv-result').value; const teamRes = document.getElementById('team-total-result').value; const indivRank = (indivRes === '負け✖') ? document.getElementById('indiv-final-rank').value : ""; const teamRank = (teamRes === '負け✖') ? document.getElementById('team-final-rank').value : ""; if(!name) return alert("大会名不足");
+            data().tournaments.push({ name, matchCount, indivRes, indivRank, teamRes, teamRank, date: new Date().toLocaleDateString() }); let nMsg = `【結果】「${name}」が記録されました。`; if(indivRank) nMsg += ` [個人: ${indivRank}]`; if(teamRank) nMsg += ` [団体: ${teamRank}]`; addNotice(nMsg); refreshHistoryDOMs(); alert("保存しました");
+        }
+        function saveExam() { const examName = document.getElementById('exam-name').value; const venue = document.getElementById('exam-venue').value; const name = document.getElementById('exam-player').value; const rank = document.getElementById('exam-rank').value; const res = document.getElementById('exam-result').value; if(!examName || !venue || !name || !rank) return alert("入力不足"); data().exams.push({ examName, venue, name, rank, res, date: new Date().toLocaleDateString() }); addNotice(`【審査】「${examName}」にて、${name}さんが ${rank}に「${res}」しました。`); refreshHistoryDOMs(); document.getElementById('exam-rank').value = ''; alert("保存しました"); }
+        function refreshHistoryDOMs() {
+            let mHtml = ""; data().meetings.forEach((m, i) => { mHtml += `<div class="accordion"><div class="accordion-header" onclick="toggleAccordion('meet-${i}')">${m.date} 会合</div><div id="meet-${i}" class="accordion-content">${m.content}</div></div>`; }); document.getElementById('meeting-history').innerHTML = mHtml;
+            let tHtml = ""; data().tournaments.forEach((t, i) => { let det = `■ 個人: ${t.indivRes} ${t.indivRank ? `(${t.indivRank})` : ''}\n■ 団体: ${t.teamRes} ${t.teamRank ? `(${t.teamRank})` : ''}`; tHtml += `<div class="accordion"><div class="accordion-header" onclick="toggleAccordion('tourn-${i}')">${t.name} (${t.date})</div><div id="tourn-${i}" class="accordion-content">${det}</div></div>`; }); document.getElementById('tourney-history').innerHTML = tHtml;
+            let eHtml = ""; data().exams.forEach((e, i) => { eHtml += `<div class="accordion"><div class="accordion-header" onclick="toggleAccordion('exam-${i}')">${e.examName} (${e.date})</div><div id="exam-${i}" class="accordion-content">■受審: ${e.name} ${e.rank} [${e.res}]</div></div>`; }); document.getElementById('exam-history').innerHTML = eHtml;
+        }
+        function toggleAccordion(id) { const el = document.getElementById(id); el.style.display = (el.style.display === 'block') ? 'none' : 'block'; }
+        window.onload = function() { initYearSelector(); loadInitialData(); generateMonthlyCalendar(); changeSystemYear(); initTeamForm(); updateRosterDOM(); }
+    </script>
+</body>
+</html>
