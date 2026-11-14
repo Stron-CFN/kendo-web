@@ -680,23 +680,13 @@
                 <div id="dev-handover-list"></div>
             </div>
 
-            <!-- ⑨ ソースコード事前格納 & メンテナンス反映 -->
+            <!-- マニュアル配信の予約 -->
             <div class="dev-section update-box">
-                <h3>🚀 コード事前置き換え & ダウンタイム自動反映設定</h3>
+                <h3>📅 マニュアル配信の予約設定</h3>
                 <div class="form-group">
-                    <label style="font-size:0.8rem;">① ダウンタイム開始日時</label>
-                    <input type="datetime-local" id="maint-start-input">
-                </div>
-                <div class="form-group">
-                    <label style="font-size:0.8rem;">② ダウンタイム終了日時（この直後に新マニュアルを自動送信）</label>
+                    <label style="font-size:0.8rem;">① 配信予約日時（未設定の場合は登録時に確認します）</label>
                     <input type="datetime-local" id="maint-end-input">
-                </div>
-                <div class="form-group">
-                    <label style="font-size:0.8rem;">③ 事前に格納する最新ソースコード (HTML全文)</label>
-                    <textarea id="pending-code-input" rows="4" placeholder="<!DOCTYPE html>... から始まるコード"></textarea>
-                </div>
-                <button class="btn-primary" style="width:100%; margin-bottom:4px;" onclick="uploadPendingCodeAndScheduleByMaker()">事前コード格納＆ダウンタイム予約設定</button>
-            </div>
+                </div>            </div>
         </div>
     </div>
 
@@ -4729,76 +4719,6 @@ ${senderUser.name} 様
             container.innerHTML = html;
         }
 
-        function uploadPendingCodeAndScheduleByMaker() {
-            const startVal = document.getElementById('maint-start-input')?.value;
-            const endVal = document.getElementById('maint-end-input')?.value;
-            const codeEl = document.getElementById('pending-code-input');
-            const code = codeEl ? codeEl.value.trim() : '';
-            if (!startVal) return alert("① ダウンタイム開始日時を入力してください。");
-            if (!code) return alert("③ 事前に格納する最新ソースコード（HTML全文）を入力してください。");
-            if (code.length < 5000 || code.indexOf('<') < 0) return alert("HTML全文を貼り付けてください（コードが短すぎます）。");
-            if (!gasToken()) return alert('GASにログインしてから操作してください。');
-            if (!confirm('次の日時から新しいコードへ自動で置き換えます。\n' + formatSendAt(startVal) + '\n\nよろしいですか？')) return;
-            askAdminPassThen('update_exec', 'アップデート機能').then(function (ok) {
-            if (!ok) throw new Error('認証がキャンセルされました');
-            return gasRun('apiSavePendingCode', gasToken(), code, startVal, endVal || '');
-        }).then(res => {
-                if (!res || !res.ok) return alert((res && res.message) || 'コードの格納に失敗しました。');
-                try {
-                    localStorage.setItem('system_pending_code', JSON.stringify({
-                        html: code, startAt: startVal, endAt: endVal || '', version: res.version, savedAt: new Date().toLocaleString()
-                    }));
-                } catch (e) {}
-                alert('🛠 コードを格納しました。\n' + formatSendAt(startVal) + ' 以降にアプリを開くと自動で置き換わります。\n（名簿は置き換え前に自動退避され、失敗時は復元されます）');
-            }).catch(err => alert('格納エラー: ' + ((err && err.message) || err)));
-        }
-
-        // ダウンタイム開始後に、サイト内でコードを自動置き換え（デプロイ不要）
-        function applyPendingCodeIfDue() {
-            try {
-                // 前回の置き換えが途中で失敗していたら名簿を守る
-                const stuck = localStorage.getItem('club_update_in_progress');
-                if (stuck) {
-                    let s = {};
-                    try { s = JSON.parse(stuck); } catch (e) {}
-                    const pre = localStorage.getItem('club_accounts_preupdate');
-                    let cur = [];
-                    try { cur = JSON.parse(localStorage.getItem('system_accounts') || '[]'); } catch (e) { cur = []; }
-                    if (pre && (!Array.isArray(cur) || !cur.length)) {
-                        _nativeStorageSetItem.call(localStorage, 'system_accounts', pre);
-                        console.warn('更新失敗を検知したため名簿を復元しました（' + (s.version || '') + '）');
-                    }
-                    localStorage.removeItem('club_update_in_progress');
-                }
-                const raw = localStorage.getItem('system_pending_code');
-                if (!raw) return false;
-                const p = JSON.parse(raw);
-                if (!p || !p.html) return false;
-                const startMs = new Date(p.startAt).getTime();
-                if (isNaN(startMs) || Date.now() < startMs) return false;
-                const appliedKey = 'club_applied_code_' + (p.version || p.savedAt || '1');
-                if (localStorage.getItem(appliedKey) === '1') return false;
-                // 置き換え前の名簿・旧コードを退避
-                const accs = localStorage.getItem('system_accounts');
-                if (accs) {
-                    localStorage.setItem('club_accounts_preupdate', accs);
-                    try { localStorage.setItem('club_accounts_backup', JSON.stringify({ at: new Date().toLocaleString(), accounts: JSON.parse(accs) })); } catch (e) {}
-                }
-                localStorage.setItem(appliedKey, '1');
-                localStorage.setItem('club_update_in_progress', JSON.stringify({ at: Date.now(), version: p.version || '' }));
-                try { localStorage.removeItem('club_pending_prev_html'); } catch (e) {}
-                document.open();
-                document.write(p.html);
-                document.close();
-                return true;
-            } catch (e) {
-                console.error('コード置き換えに失敗:', e);
-                localStorage.removeItem('club_update_in_progress');
-                return false;
-            }
-        }
-        window.applyPendingCodeIfDue = applyPendingCodeIfDue;
-
         // 起動が正常に終わったら「更新中」フラグを解除
         function clearUpdateFlag() {
             try { setTimeout(function () { localStorage.removeItem('club_update_in_progress'); }, 5000); } catch (e) {}
@@ -6058,7 +5978,18 @@ ${senderUser.name} 様
         }
 
         window.onload = async function() {
-            try { if (applyPendingCodeIfDue()) return; } catch (e) {}
+            try {
+                const stuck = localStorage.getItem('club_update_in_progress');
+                if (stuck) {
+                    const pre = localStorage.getItem('club_accounts_preupdate');
+                    let cur = [];
+                    try { cur = JSON.parse(localStorage.getItem('system_accounts') || '[]'); } catch (e) { cur = []; }
+                    if (pre && (!Array.isArray(cur) || !cur.length)) {
+                        _nativeStorageSetItem.call(localStorage, 'system_accounts', pre);
+                    }
+                    localStorage.removeItem('club_update_in_progress');
+                }
+            } catch (e) {}
             try { clearUpdateFlag(); } catch (e) {}
             const token = gasToken();
             if (token) {

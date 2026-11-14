@@ -995,7 +995,6 @@ function apiSaveData(key, jsonValue, token, baseRev) {
     system_handover_docs: '引継ぎ資料を変更',
     system_toinkai_docs: '桐蔭会原稿を変更',
     system_manual_versions: 'マニュアルを変更',
-    system_pending_code: 'サイト内コードを登録'
   };
   if (AUDIT_KEYS[key]) {
     let teaser = '';
@@ -1652,4 +1651,744 @@ function ensureSecondaryPassDefaults_() {
       props.setProperty(SECONDARY_PASS_PREFIX + k, SECONDARY_PASS_DEFAULTS[k]);
     }
   });
+}
+
+/* ============================================================
+ * 年度予定（画像/PDF）から長期休みを抽出する
+ *  - 追加のAPIキー不要。Google ドライブのOCR（Drive API 拡張サービス）を使用
+ *  - Drive API が無く Gemini キーがあれば Gemini の画像読解を使用
+ * ============================================================ */
+function apiExtractVacations(base64, fileName, mimeType, year, token) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログインしてください。');
+  if (!session.isAdvisor && !session.isMaker) throw new Error('顧問または作成者のみ実行できます。');
+  const y = Number(year) || new Date().getFullYear();
+
+  let text = '', engine = '', err = '';
+
+  // 1) Google ドライブ OCR（Drive API 拡張サービス）
+  try {
+    text = ocrTextFromBlob_(base64, fileName, mimeType);
+    if (text) engine = 'drive-ocr';
+  } catch (e) { err = 'OCR: ' + e; }
+
+  // 2) Gemini（キーがある場合のみ）
+  if (!text) {
+    try {
+      const r = geminiReadPlan_(base64, mimeType);
+      if (r) { text = r; engine = 'gemini'; }
+    } catch (e) { err += ' / Gemini: ' + e; }
+  }
+
+  if (!text) {
+    return {
+      ok: false, engine: 'none', periods: [],
+      message: '画像から文字を読み取れませんでした。',
+      error: err
+    };
+  }
+
+  const periods = parseVacationText_(text, y);
+  return { ok: periods.length > 0, engine: engine, periods: periods, textSample: String(text).slice(0, 1200), error: err };
+}
+
+/** 画像/PDFをGoogleドキュメントにOCR変換してテキストを返す */
+function ocrTextFromBlob_(base64, fileName, mimeType) {
+  if (typeof Drive === 'undefined' || !Drive.Files) {
+    throw new Error('Drive API（拡張サービス）が未設定です。エディタ左の「サービス」→「Drive API」を追加してください。');
+  }
+  if (!base64) throw new Error('ファイルデータがありません。');
+  const bytes = Utilities.base64Decode(base64);
+  if (bytes.length > CONFIG.MAX_FILE_BYTES) throw new Error('ファイルが大きすぎます（12MB以下）。');
+  const blob = Utilities.newBlob(bytes, mimeType || 'image/png', fileName || 'yearly_plan');
+  let docId = '';
+  try {
+    const res = Drive.Files.insert(
+      { title: 'OCR_' + Date.now(), mimeType: MimeType.GOOGLE_DOCS },
+      blob,
+      { ocr: true, ocrLanguage: 'ja' }
+    );
+    docId = res.id;
+    const body = DocumentApp.openById(docId).getBody().getText();
+    return String(body || '');
+  } finally {
+    if (docId) { try { DriveApp.getFileById(docId).setTrashed(true); } catch (e) {} }
+  }
+}
+
+/** Gemini で画像を読む（GEMINI_API_KEY がある時だけ） */
+function geminiReadPlan_(base64, mimeType) {
+  const key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!key || !base64 || base64.length > 5500000) return '';
+  const prompt = 'この年度予定表の画像から「夏休み」「冬休み」「春休み」（夏季休業・冬季休業・春季休業）の開始日と終了日だけを抜き出し、'
+    + 'JSONのみで返してください: {"periods":[{"label":"夏休み","start":"7/10","end":"8/31"}]}。見つからない項目は省いてください。';
+  const models = [];
+  const configured = PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL') || '';
+  [configured, 'gemini-2.5-flash', 'gemini-2.0-flash'].forEach(function (m) { if (m && models.indexOf(m) < 0) models.push(m); });
+  for (let i = 0; i < models.length; i++) {
+    try {
+      const res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(models[i]) + ':generateContent', {
+        method: 'post', contentType: 'application/json',
+        headers: { 'x-goog-api-key': String(key) },
+        payload: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType || 'image/png', data: base64 } }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 300 }
+        }),
+        muteHttpExceptions: true
+      });
+      if (res.getResponseCode() !== 200) continue;
+      const body = JSON.parse(res.getContentText());
+      const parts = (((body.candidates || [])[0] || {}).content || {}).parts || [];
+      const txt = (parts[0] || {}).text || '';
+      if (txt) return txt;
+    } catch (e) {}
+  }
+  return '';
+}
+
+/** テキストから長期休み期間を抽出 */
+function parseVacationText_(text, year) {
+  const lines = String(text || '').split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+  const defs = [
+    { label: '夏休み', re: /夏(季|期)?\s*(休み|休業|休暇)|夏季休業/ },
+    { label: '冬休み', re: /冬(季|期)?\s*(休み|休業|休暇)|冬季休業/ },
+    { label: '春休み', re: /春(季|期)?\s*(休み|休業|休暇)|春季休業/ }
+  ];
+  const out = [];
+  defs.forEach(function (d) {
+    for (let i = 0; i < lines.length; i++) {
+      if (!d.re.test(lines[i])) continue;
+      const windowText = [lines[i], lines[i + 1] || '', lines[i + 2] || ''].join(' ');
+      const dates = extractMonthDays_(windowText);
+      if (dates.length >= 2) {
+        const s = toISODate_(d.label, dates[0], year, false);
+        const e = toISODate_(d.label, dates[1], year, true);
+        if (s && e) {
+          out.push({ label: d.label, startDate: s, endDate: e, raw: windowText.slice(0, 100) });
+          break;
+        }
+      }
+    }
+  });
+  return out;
+}
+
+function extractMonthDays_(s) {
+  const re = /(\d{1,2})\s*[月\/]\s*(\d{1,2})/g;
+  const res = [];
+  let m;
+  while ((m = re.exec(String(s))) !== null) {
+    const mo = Number(m[1]), da = Number(m[2]);
+    if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31) res.push({ m: mo, d: da });
+    if (res.length >= 4) break;
+  }
+  return res;
+}
+
+function toISODate_(label, md, year, isEnd) {
+  const y = Number(year);
+  let yy = y;
+  if (label === '夏休み') yy = (md.m >= 4) ? y : y + 1;
+  else if (label === '冬休み') yy = (md.m >= 9) ? y : y + 1;
+  else if (label === '春休み') yy = (md.m >= 4) ? y + 1 : y + 1;
+  const mm = String(md.m).padStart(2, '0');
+  const dd = String(md.d).padStart(2, '0');
+  const iso = yy + '-' + mm + '-' + dd;
+  return isNaN(new Date(iso + 'T00:00:00').getTime()) ? '' : iso;
+}
+
+/* ============================================================
+ * アカウント消失対策：保存のたびに5世代バックアップを残す
+ * ============================================================ */
+function saveAccountsBackup_(accounts) {
+  try {
+    if (!Array.isArray(accounts) || !accounts.length) return;
+    const props = PropertiesService.getScriptProperties();
+    const idx = (Number(props.getProperty('ACCOUNTS_BACKUP_IDX') || -1) + 1) % 5;
+    props.setProperty('ACCOUNTS_BACKUP_IDX', String(idx));
+    const at = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+    writeData_('accounts_backup_' + idx, { at: at, count: accounts.length, accounts: accounts });
+    props.setProperty('ACCOUNTS_BACKUP_TS_' + idx, at);
+  } catch (e) { Logger.log('バックアップ失敗: ' + e); }
+}
+
+/** バックアップ一覧（作成者のみ） */
+function apiListAccountBackups(token) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログインしてください。');
+  if (!session.isMaker) throw new Error('作成者のみ実行できます。');
+  const items = [];
+  for (let i = 0; i < 5; i++) {
+    const b = readData_('accounts_backup_' + i, null);
+    if (b && Array.isArray(b.accounts) && b.accounts.length) {
+      items.push({ slot: i, at: b.at || '', count: b.count || b.accounts.length });
+    }
+  }
+  items.sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); });
+  return { ok: true, items: items };
+}
+
+/** バックアップから復元（作成者のみ） */
+function apiRestoreAccounts(token, slot) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログインしてください。');
+  if (!session.isMaker) throw new Error('作成者のみ実行できます。');
+  const b = readData_('accounts_backup_' + Number(slot), null);
+  if (!b || !Array.isArray(b.accounts) || !b.accounts.length) throw new Error('そのバックアップは空です。');
+  // 復元前の現状も退避
+  const current = readData_('system_accounts', []);
+  if (Array.isArray(current) && current.length) saveAccountsBackup_(current);
+  writeData_('system_accounts', b.accounts);
+  bumpRev_('system_accounts');
+  return { ok: true, count: b.accounts.length, at: b.at || '' };
+}
+
+/** 名簿が空になっていたら、直近のバックアップから自動復元する */
+function autoRestoreAccountsIfLost_() {
+  const cur = readData_('system_accounts', []);
+  if (Array.isArray(cur) && cur.length) return;
+  // 意図的なリセット直後は、古いバックアップから勝手に復元しない
+  const reset = readData_('system_reset', null);
+  if (reset && reset.at) { Logger.log('リセット後のため自動復元をスキップ（' + reset.at + '）'); return; }
+  let best = null;
+  for (let i = 0; i < 5; i++) {
+    const b = readData_('accounts_backup_' + i, null);
+    if (b && Array.isArray(b.accounts) && b.accounts.length) {
+      if (!best || String(b.at) > String(best.at)) best = b;
+    }
+  }
+  if (best) {
+    writeData_('system_accounts', best.accounts);
+    bumpRev_('system_accounts');
+    Logger.log('名簿が空のため、バックアップ（' + best.at + '）から自動復元しました。');
+  }
+}
+
+/** アカウント削除（明示操作のみ）。作成者＝全員／顧問＝部員のみ削除可 */
+function apiDeleteAccount(token, targetId) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログインしてください。');
+  const id = String(targetId || '').trim();
+  if (!id) throw new Error('対象IDが不正です。');
+  const accounts = readData_('system_accounts', []);
+  const target = accounts.find(a => String(a.id) === id);
+  if (!target) throw new Error('対象アカウントが見つかりません。');
+  if (target.isMaker) throw new Error('作成者アカウントは削除できません。');
+  if (!session.isMaker && !session.isAdvisor) throw new Error('削除する権限がありません。');
+  if (!session.isMaker && target.isAdvisor) throw new Error('顧問アカウントは作成者のみ削除できます。');
+  const next = accounts.filter(a => String(a.id) !== id);
+  writeData_('system_accounts', next);
+  saveAccountsBackup_(next);
+  bumpRev_('system_accounts');
+  try { vaultDelete_(id); } catch (e) {}
+  try { appendAudit_(session.id, 'アカウントを削除', id, String(target.name || '')); } catch (e) {}
+  return { ok: true, deleted: id, remaining: next.length };
+}
+
+
+/* ============================================================
+ * 監査ログ / 退部フラグ / 名簿CSV一括登録
+ * ============================================================ */
+const AUDIT_MAX = 800;
+const ACCOUNT_STATUS_LABEL = { active: '在籍', retired: '退部', graduated: '卒業', left: '停止' };
+
+function auditActorName_(id) {
+  try {
+    const a = readData_('system_accounts', []).find(x => String(x.id) === String(id));
+    return a ? String(a.name || '') : '';
+  } catch (e) { return ''; }
+}
+
+function appendAudit_(actorId, action, target, detail) {
+  try {
+    const list = readData_('system_audit_log', []);
+    const arr = Array.isArray(list) ? list : [];
+    arr.push({
+      at: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'),
+      actorId: String(actorId || ''),
+      actorName: auditActorName_(actorId),
+      action: String(action || ''),
+      target: String(target || ''),
+      detail: String(detail || '').slice(0, 400)
+    });
+    while (arr.length > AUDIT_MAX) arr.shift();
+    writeData_('system_audit_log', arr);
+    return true;
+  } catch (e) { return false; }
+}
+
+function apiListAuditLog(token, limit) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログインしてください。');
+  if (!session.isMaker && !session.isAdvisor) throw new Error('監査ログを閲覧する権限がありません。');
+  const n = Math.min(Math.max(Number(limit) || 200, 1), AUDIT_MAX);
+  const list = readData_('system_audit_log', []);
+  const arr = Array.isArray(list) ? list : [];
+  return { ok: true, total: arr.length, entries: arr.slice(-n).reverse() };
+}
+
+function apiClearAuditLog(token) {
+  const session = requireSession_(token);
+  if (!session || !session.isMaker) throw new Error('作成者のみ実行できます。');
+  const before = (readData_('system_audit_log', []) || []).length;
+  writeData_('system_audit_log', []);
+  appendAudit_(session.id, '監査ログを全削除', 'system_audit_log', '削除件数:' + before);
+  return { ok: true, cleared: before };
+}
+
+function apiSetAccountStatus(token, targetId, status) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログインしてください。');
+  status = String(status || '');
+  if (!ACCOUNT_STATUS_LABEL[status]) throw new Error('状態の指定が不正です。');
+  const id = String(targetId || '').trim();
+  const accounts = readData_('system_accounts', []);
+  const target = accounts.find(a => String(a.id) === id);
+  if (!target) throw new Error('対象アカウントが見つかりません。');
+  if (target.isMaker) throw new Error('作成者アカウントの状態は変更できません。');
+  if (!session.isMaker && !session.isAdvisor) throw new Error('状態変更の権限がありません。');
+  if (!session.isMaker && target.isAdvisor) throw new Error('顧問の状態は作成者のみ変更できます。');
+  const before = String(target.status || 'active');
+  target.status = status;
+  target.statusChangedAt = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+  target.statusChangedBy = String(session.id);
+  writeData_('system_accounts', accounts);
+  saveAccountsBackup_(accounts);
+  bumpRev_('system_accounts');
+  appendAudit_(session.id, 'アカウント状態変更', id, String(target.name || '') + '：' + (ACCOUNT_STATUS_LABEL[before] || before) + ' → ' + ACCOUNT_STATUS_LABEL[status]);
+  return { ok: true, id: id, status: status, statusLabel: ACCOUNT_STATUS_LABEL[status] };
+}
+
+function kiseiOfEntryYear_(y) { return Number(y) - 1975; }
+
+function nextMemberSeq_(accounts, entryYear) {
+  const k = kiseiOfEntryYear_(entryYear);
+  const prefix = String(Number(entryYear) % 100).padStart(2, '0') + String(k).padStart(2, '0');
+  let max = 0;
+  (accounts || []).forEach(a => {
+    const id = String((a && a.id) || '');
+    if (id.length === 6 && id.indexOf(prefix) === 0) {
+      const n = Number(id.slice(4));
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return max + 1;
+}
+
+function makeInitialPassword_() {
+  const up = 'ABCDEFGHJKLMNPQRSTUVWXYZ', low = 'abcdefghijkmnpqrstuvwxyz', dg = '23456789';
+  const pick = s => s.charAt(Math.floor(Math.random() * s.length));
+  return 'Kd' + pick(dg) + pick(dg) + pick(up) + pick(low) + pick(up) + '!' + pick(dg) + pick(dg);
+}
+
+/** CSV（名前,学年,入学年度,区分）で名簿を一括登録し、初期パスワードを1回だけ返す */
+function apiBulkRegisterAccounts(token, jsonRows) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログインしてください。');
+  if (!session.isMaker && !session.isAdvisor) throw new Error('名簿の一括登録は顧問・作成者のみ実行できます。');
+  let rows;
+  try { rows = JSON.parse(jsonRows || '[]'); } catch (e) { throw new Error('CSVデータの形式が正しくありません。'); }
+  if (!Array.isArray(rows) || !rows.length) throw new Error('登録する行がありません。');
+  if (rows.length > 200) throw new Error('一度に登録できるのは200件までです。');
+
+  const accounts = readData_('system_accounts', []);
+  const created = [], skipped = [];
+  const nowStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+  const d = new Date();
+  const fy = (d.getMonth() + 1) >= 4 ? d.getFullYear() : d.getFullYear() - 1;
+
+  rows.forEach((r, i) => {
+    const name = String((r && r.name) || '').replace(/[\u3000\s]+/g, ' ').trim();
+    const line = i + 1;
+    if (!name) { skipped.push({ line: line, reason: '名前が空です' }); return; }
+    const norm = name.replace(/\s+/g, '');
+    if (accounts.some(a => String((a && a.name) || '').replace(/\s+/g, '') === norm)) {
+      skipped.push({ line: line, name: name, reason: '同じ名前のアカウントが既にあります' });
+      return;
+    }
+    const kindRaw = String((r && r.kind) || '').trim();
+    const isAdvisor = kindRaw === '顧問' || kindRaw.toLowerCase() === 'advisor';
+    const pass = makeInitialPassword_();
+    const acc = { name: name, createdAt: nowStr, status: 'active' };
+
+    if (isAdvisor) {
+      const used = accounts.filter(a => a.isAdvisor).map(a => Number(a.id)).filter(n => !isNaN(n));
+      let n = 1;
+      while (used.indexOf(n) >= 0 && n <= 2) n++;
+      if (n > 2) { skipped.push({ line: line, name: name, reason: '顧問アカウントは2名までです（000001／000002）' }); return; }
+      acc.id = String(n).padStart(6, '0');
+      acc.isAdvisor = true; acc.isMaker = false; acc.role = '顧問'; acc.grade = '顧問';
+      acc.joinedAt = nowStr;
+    } else {
+      const g = Number(String((r && r.grade) || '').replace(/[^0-9]/g, ''));
+      if (!(g >= 1 && g <= 3)) { skipped.push({ line: line, name: name, reason: '学年は1〜3で入力してください' }); return; }
+      const entryYear = Number(String((r && r.entryYear) || '').replace(/[^0-9]/g, '')) || (fy - (g - 1));
+      const seq = nextMemberSeq_(accounts, entryYear);
+      if (seq > 99) { skipped.push({ line: line, name: name, reason: '同一年度の登録上限（99名）に達しています' }); return; }
+      acc.id = String(entryYear % 100).padStart(2, '0') + String(kiseiOfEntryYear_(entryYear)).padStart(2, '0') + String(seq).padStart(2, '0');
+      acc.isAdvisor = false; acc.isMaker = false; acc.role = '一般'; acc.grade = String(g);
+      acc.entryYear = entryYear; acc.kisei = kiseiOfEntryYear_(entryYear); acc.joinedAt = nowStr;
+    }
+    setAccountPassword_(acc, pass);
+    accounts.push(acc);
+    created.push({ id: acc.id, name: name, kind: isAdvisor ? '顧問' : '部員', grade: acc.grade || '', entryYear: acc.entryYear || '', password: pass });
+  });
+
+  if (created.length) {
+    writeData_('system_accounts', accounts);
+    saveAccountsBackup_(accounts);
+    bumpRev_('system_accounts');
+    appendAudit_(session.id, '名簿を一括登録', 'system_accounts', created.length + '件登録 / ' + skipped.length + '件スキップ');
+  }
+  return { ok: true, created: created, skipped: skipped, total: accounts.length };
+}
+
+/* ===== 2026年度限定：桐蔭会原稿・三役引継ぎ資料のリマインド停止 ===== */
+const DOC_REMINDER_EXEMPT_FISCAL_YEARS = [2026];
+function currentFiscalYearForNotice_() {
+  const d = new Date();
+  return (d.getMonth() + 1) >= 4 ? d.getFullYear() : d.getFullYear() - 1;
+}
+function isDocReminderSuppressed_(text) {
+  if (DOC_REMINDER_EXEMPT_FISCAL_YEARS.indexOf(currentFiscalYearForNotice_()) < 0) return false;
+  return /桐蔭会|原稿|引継ぎ資料|引き継ぎ資料|雑誌/.test(String(text || ''));
+}
+
+
+/** 旧主将（原稿提出のみ）の指定・解除。作成者のみ */
+function apiSetFormerCaptain(token, targetId, on) {
+  const session = requireSession_(token);
+  if (!session || !session.isMaker) throw new Error('作成者のみ実行できます。');
+  const id = String(targetId || '').trim();
+  const accounts = readData_('system_accounts', []);
+  const target = accounts.find(a => String(a.id) === id);
+  if (!target) throw new Error('対象アカウントが見つかりません。');
+  if (target.isMaker) throw new Error('作成者アカウントは変更できません。');
+  const sanyi = readData_('system_sanyi_data', {}) || {};
+  if (String(sanyi.captainId || '') === id) throw new Error('現在の主将は旧主将にできません。');
+  const enable = (on === true || String(on) === 'true');
+  let former = Array.isArray(sanyi.formerCaptainIds) ? sanyi.formerCaptainIds.map(String) : [];
+  if (enable) {
+    target.toinkaiOnly = true;
+    target.role = '前主将';
+    if (former.indexOf(id) < 0) former.push(id);
+  } else {
+    target.toinkaiOnly = false;
+    if (String(target.role || '') === '前主将') target.role = '一般';
+    former = former.filter(function (x) { return x !== id; });
+  }
+  sanyi.formerCaptainIds = former.slice(-5);
+  writeData_('system_accounts', accounts);
+  writeData_('system_sanyi_data', sanyi);
+  saveAccountsBackup_(accounts);
+  bumpRev_('system_accounts');
+  bumpRev_('system_sanyi_data');
+  appendAudit_(session.id, enable ? '旧主将（原稿のみ）に指定' : '旧主将の指定を解除', id, String(target.name || ''));
+  return { ok: true, id: id, toinkaiOnly: !!target.toinkaiOnly, role: target.role };
+}
+
+
+/* ============================================================
+ * 管理者ツール入室用 専用ID／パスワード
+ * Script Properties の ADMIN_ID_<TOOL> / ADMIN_PASS_<TOOL> で上書き可
+ * ============================================================ */
+const ADMIN_TOOL_CREDENTIALS = {
+  accounting: { id: 'Contabilità/director@13456', pass: 'bilancio@12456' },
+  captain:    { id: 'director/capitano@456',      pass: 'pass.24680' },
+  advisor:    { id: 'director/consulente@123',    pass: 'pass.13579' },
+  maker:      { id: 'Maker/Creatore@789',         pass: 'pass.124578' }
+};
+
+function adminToolCredential_(tool) {
+  const t = String(tool || '');
+  const base = ADMIN_TOOL_CREDENTIALS[t];
+  if (!base) return null;
+  const props = PropertiesService.getScriptProperties();
+  return {
+    id: String(props.getProperty('ADMIN_ID_' + t.toUpperCase()) || base.id),
+    pass: String(props.getProperty('ADMIN_PASS_' + t.toUpperCase()) || base.pass)
+  };
+}
+
+function verifyAdminToolCredentials(token, tool, id, password) {
+  const session = requireSession_(token);
+  if (!session) return { ok: false, message: 'ログイン期限が切れました。再ログインしてください。' };
+  const key = String(tool || '');
+  const cred = adminToolCredential_(key);
+  if (!cred) return { ok: false, message: '対象の管理者ツールが見つかりません。' };
+  const cache = CacheService.getScriptCache();
+  const failKey = 'adm_fail_' + key + '_' + session.id;
+  const fails = Number(cache.get(failKey) || 0);
+  if (fails >= 5) return { ok: false, message: '認証の失敗が続いています。5分ほど待ってから再度お試しください。' };
+  const norm = function (v) { return String(v == null ? '' : v).trim().normalize('NFC'); };
+  const okId = norm(id) === norm(cred.id);
+  const okPass = String(password == null ? '' : password) === cred.pass;
+  if (!okId || !okPass) {
+    cache.put(failKey, String(fails + 1), 300);
+    appendAudit_(session.id, '管理者ツール認証失敗', key, '');
+    return { ok: false, message: '専用IDまたはパスワードが正しくありません。' };
+  }
+  cache.remove(failKey);
+  appendAudit_(session.id, '管理者ツール認証', key, '');
+  return { ok: true, tool: key };
+}
+
+
+/* ============================================================
+ * 名簿の全削除（再構築用）／復元
+ * GASエディタから手動実行してください。
+ * ============================================================ */
+function resetAllAccountsForRebuild(keepMakerId) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const accounts = readData_('system_accounts', []);
+    if (!Array.isArray(accounts) || !accounts.length) {
+      return { ok: true, deleted: 0, kept: 0, message: 'アカウントは既に空です。' };
+    }
+    // 復元用に固定キーへ退避（＋通常の5世代バックアップにも保存）
+    writeData_('system_accounts_pre_reset', {
+      at: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'),
+      count: accounts.length,
+      accounts: accounts
+    });
+    saveAccountsBackup_(accounts);
+
+    const resetAt = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+    writeData_('system_reset', { at: resetAt, by: 'rebuild' });
+    const keep = String(keepMakerId || '').trim();
+    const next = keep ? accounts.filter(function (a) { return String(a.id) === keep; }) : [];
+    accounts.forEach(function (a) {
+      if (keep && String(a.id) === keep) return;
+      try { vaultDelete_(String(a.id)); } catch (e) {}
+    });
+    writeData_('system_accounts', next);
+    bumpRev_('system_accounts');
+
+    try { writeData_('system_sanyi_data', {}); bumpRev_('system_sanyi_data'); } catch (e) {}
+    try { writeData_('system_dm_warnings', []); } catch (e) {}
+    appendAudit_('system', '全アカウント削除（再構築）', 'system_accounts',
+      '削除' + (accounts.length - next.length) + '件 / 残' + next.length + '件');
+    return { ok: true, deleted: accounts.length - next.length, kept: next.length, backupKey: 'system_accounts_pre_reset' };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** resetAllAccountsForRebuild の直前に戻す */
+function restoreAccountsAfterReset() {
+  const bak = readData_('system_accounts_pre_reset', null);
+  if (!bak || !Array.isArray(bak.accounts) || !bak.accounts.length) {
+    throw new Error('復元できるバックアップがありません（system_accounts_pre_reset）。');
+  }
+  writeData_('system_accounts', bak.accounts);
+  saveAccountsBackup_(bak.accounts);
+  bumpRev_('system_accounts');
+  appendAudit_('system', '全削除を復元', 'system_accounts', bak.count + '件（' + bak.at + '）');
+  return { ok: true, restored: bak.accounts.length, at: bak.at };
+}
+
+
+/**
+ * 【再構築用・一括】全アカウントを削除し、新しい作成者を1件だけ作る。
+ * GASエディタから引数なしで実行 → 実行ログに新しい作成者ID／パスワードが出ます。
+ * 事前に system_accounts_pre_reset へ自動退避します（restoreAccountsAfterReset で復元可）。
+ */
+function resetAllAccountsAndCreateCreatorForRebuild() {
+  const reset = resetAllAccountsForRebuild();   // keepMakerId なし＝全削除
+  const created = createInitialCreator();        // アカウント0件のときだけ成功
+  Logger.log('=== 再構築完了 ===');
+  Logger.log('削除件数: ' + reset.deleted);
+  Logger.log('新しい作成者ID: ' + created.id);
+  Logger.log('新しい作成者パスワード: ' + created.password);
+  return {
+    ok: true,
+    deleted: reset.deleted,
+    creatorId: created.id,
+    creatorPassword: created.password,
+    note: 'パスワードはこの実行ログにのみ表示されます。必ず控えてください。'
+  };
+}
+
+
+/* ============================================================
+ * ログインできないときの復旧用（GASエディタから実行・ログイン不要）
+ * ============================================================ */
+
+/** 登録済みアカウントのID・名前・権限を一覧表示（パスワードは出ません） */
+function listAllAccountsForRecovery() {
+  const accounts = readData_('system_accounts', []);
+  const rows = (accounts || []).map(function (a) {
+    return {
+      id: String(a.id || ''),
+      name: String(a.name || ''),
+      isMaker: !!a.isMaker,
+      isAdvisor: !!a.isAdvisor,
+      role: String(a.role || ''),
+      grade: String(a.grade || ''),
+      status: String(a.status || 'active')
+    };
+  });
+  Logger.log('登録アカウント数: ' + rows.length);
+  Logger.log(JSON.stringify(rows, null, 2));
+  return rows;
+}
+
+/** 指定IDのパスワードを強制再発行し、ログインできる状態に戻す */
+function resetPasswordForAccountById(targetId) {
+  const id = String(targetId || '').trim();
+  if (!id) throw new Error('引数にIDを指定してください（例: resetPasswordForAccountById("244901")）');
+  const accounts = readData_('system_accounts', []);
+  const target = (accounts || []).find(function (a) { return String(a.id) === id; });
+  if (!target) throw new Error('ID「' + id + '」が見つかりません。先に listAllAccountsForRecovery でIDを確認してください。');
+  const pass = randomPassword_(12);
+  setAccountPassword_(target, pass);
+  target.status = 'active';
+  target.toinkaiOnly = false;
+  writeData_('system_accounts', accounts);
+  saveAccountsBackup_(accounts);
+  bumpRev_('system_accounts');
+  appendAudit_('system', 'パスワード強制再発行（エディタ）', id, String(target.name || ''));
+  Logger.log('=== 再発行完了 ===');
+  Logger.log('ID: ' + id + '（' + String(target.name || '') + '）');
+  Logger.log('新しいパスワード: ' + pass);
+  return { id: id, name: String(target.name || ''), password: pass };
+}
+
+/** 指定IDを作成者（全権限）に昇格させる */
+function makeAccountMakerById(targetId) {
+  const id = String(targetId || '').trim();
+  const accounts = readData_('system_accounts', []);
+  const target = (accounts || []).find(function (a) { return String(a.id) === id; });
+  if (!target) throw new Error('ID「' + id + '」が見つかりません。');
+  target.isMaker = true;
+  target.role = '作成者';
+  target.status = 'active';
+  target.toinkaiOnly = false;
+  writeData_('system_accounts', accounts);
+  saveAccountsBackup_(accounts);
+  bumpRev_('system_accounts');
+  appendAudit_('system', '作成者へ昇格（エディタ）', id, String(target.name || ''));
+  Logger.log('ID「' + id + '」を作成者にしました。');
+  return { ok: true, id: id, name: String(target.name || '') };
+}
+
+
+/**
+ * 【完全消去】名簿と全バックアップを空にする（GASエディタから実行・ログイン不要）
+ * 復元されないよう system_reset 印も同時に記録します。
+ * 実行後は誰もログインできません。createInitialCreator か
+ * resetAllAccountsAndCreateCreatorForRebuild で作り直してください。
+ */
+function wipeAllAccountsHard() {
+  const accounts = readData_('system_accounts', []);
+  const at = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+  if (Array.isArray(accounts) && accounts.length) {
+    writeData_('system_accounts_pre_reset', { at: at, count: accounts.length, accounts: accounts });
+    accounts.forEach(function (a) { try { vaultDelete_(String(a.id)); } catch (e) {} });
+  }
+  writeData_('system_accounts', []);
+  // 5世代バックアップも空にする（自動復元の元を断つ）
+  for (let i = 0; i < 5; i++) { try { writeData_('accounts_backup_' + i, { at: '', count: 0, accounts: [] }); } catch (e) {} }
+  // 意図的な初期化の印
+  writeData_('system_reset', { at: at, by: 'hard-wipe' });
+  try { writeData_('system_sanyi_data', {}); } catch (e) {}
+  try { writeData_('system_dm_warnings', []); } catch (e) {}
+  bumpRev_('system_accounts');
+  bumpRev_('system_sanyi_data');
+  Logger.log('名簿を完全に空にしました（' + at + '）。アカウント数: 0');
+  return { ok: true, deleted: Array.isArray(accounts) ? accounts.length : 0, at: at };
+}
+
+
+/**
+ * 【旧名簿の復活を防ぐ】いま接続中のスプレッドシートから名簿を完全に消す。
+ * 新プロジェクトで旧CLUB_SPREADSHEET_IDを設定してしまった場合でも、
+ * これを1回実行すれば旧名簿は消えます（バックアップと復元印も同時に処理）。
+ */
+function purgeAccountsInCurrentSpreadsheet() {
+  const ssId = PropertiesService.getScriptProperties().getProperty('CLUB_SPREADSHEET_ID');
+  if (!ssId) throw new Error('CLUB_SPREADSHEET_ID が未設定です（先に setupClubSystem を実行してください）。');
+  const result = wipeAllAccountsHard();
+  Logger.log('接続中のスプレッドシート: https://docs.google.com/spreadsheets/d/' + ssId);
+  Logger.log('削除件数: ' + result.deleted + ' / 実行日時: ' + result.at);
+  return result;
+}
+
+/**
+ * 【完全に別環境にする】旧スプレッドシート・フォルダとの接続を切る。
+ * 実行後に setupClubSystem を実行すると、新しい空のシート・フォルダが作られます。
+ * ※旧シート自体は削除しません（Driveに残ります）。
+ */
+function detachOldSpreadsheetForFreshStart() {
+  const props = PropertiesService.getScriptProperties();
+  const before = {
+    spreadsheet: props.getProperty('CLUB_SPREADSHEET_ID') || '',
+    manualFolder: props.getProperty('CLUB_MANUAL_FOLDER_ID') || '',
+    attachmentFolder: props.getProperty('CLUB_ATTACH_FOLDER_ID') || ''
+  };
+  props.deleteProperty('CLUB_SPREADSHEET_ID');
+  props.deleteProperty('CLUB_MANUAL_FOLDER_ID');
+  props.deleteProperty('CLUB_ATTACH_FOLDER_ID');
+  Logger.log('旧環境との接続を解除しました。');
+  Logger.log(JSON.stringify(before, null, 2));
+  Logger.log('次に setupClubSystem を実行すると、新しい空の環境が作られます。');
+  return { ok: true, detached: before };
+}
+
+
+/** 初回（未ログイン）の作成者登録用パスコード照合。ログイン不要。 */
+function verifyMakerBootstrapPasscode(pass) {
+  try {
+    const accounts = readData_('system_accounts', []);
+    if (Array.isArray(accounts) && accounts.length) {
+      return { ok: false, message: '既にアカウントが登録されています。' };
+    }
+    const cache = CacheService.getScriptCache();
+    const failKey = 'boot_maker_pass_fail';
+    const fails = Number(cache.get(failKey) || 0);
+    if (fails >= 8) return { ok: false, message: '試行回数が上限に達しました。しばらく待ってから再度お試しください。' };
+    const props = PropertiesService.getScriptProperties();
+    const expected = String(props.getProperty('SEC_PASS_maker_passcode') || SECONDARY_PASS_DEFAULTS.maker_passcode || '');
+    const given = String(pass == null ? '' : pass).trim();
+    if (!expected || given !== expected) {
+      cache.put(failKey, String(fails + 1), 300);
+      return { ok: false, message: '作成者アカウント作成用パスコードが正しくありません。' };
+    }
+    cache.remove(failKey);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: '照合できませんでした: ' + ((e && e.message) || e) };
+  }
+}
+
+
+/** 顧問へ公式メッセージを送る（三役引継ぎ・会計引継ぎなどで使用） */
+function notifyAdvisors(body, title) {
+  try {
+    const accounts = readData_('system_accounts', []);
+    const advisors = (accounts || []).filter(function (a) {
+      return a && a.isAdvisor && String(a.status || 'active') === 'active';
+    });
+    if (!advisors.length) return { ok: false, sent: 0 };
+    const msgs = readData_('system_messages', []);
+    const arr = Array.isArray(msgs) ? msgs : [];
+    const at = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+    advisors.forEach(function (a) {
+      arr.unshift({
+        id: 'msg_' + Date.now() + '_official',
+        senderId: 'official',
+        senderName: String(title || '【公式】築附中学剣道部'),
+        receiverId: String(a.id),
+        content: String(body || ''),
+        date: at,
+        isOfficial: true
+      });
+    });
+    writeData_('system_messages', arr);
+    bumpRev_('system_messages');
+    return { ok: true, sent: advisors.length };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
 }
