@@ -866,11 +866,13 @@
                         <div class="form-block" style="border-color:#007bff;">
                             <h3 id="dm-thread-title" style="color:#007bff;"></h3>
                             <div id="dm-thread-messages" style="max-height:420px; overflow-y:auto; background:#fafafa; border:1px solid #eee; border-radius:6px; padding:10px;"></div>
+                            <div id="dm-thread-input-block">
                             <div class="form-group" style="margin-top:10px;">
                                 <label>メッセージ</label>
                                 <textarea id="dm-thread-input" rows="2" placeholder="メッセージを入力"></textarea>
                             </div>
                             <button class="submit-btn" onclick="sendThreadReply()">送信する</button>
+                            </div>
                             <button type="button" class="login-header-btn" style="margin-top:6px;" onclick="closeDmThread()">← 一覧に戻る</button>
                         </div>
                     </div>
@@ -1759,21 +1761,33 @@
             return /桐蔭会|原稿|引継ぎ資料|引き継ぎ資料|雑誌/.test(String(text || ''));
         }
 
-        function notifyAllMembers(text, senderLabel) {
+        function notifyAllMembers(text, senderLabel, keepSenderCopy) {
             if (isDocReminderSuppressed(text)) { try { console.log('今年度は原稿・引継ぎ資料のリマインドを停止'); } catch (e) {} return; }
             const targets = getSavedAccounts().filter(a => !a.isAdvisor && a.grade !== '卒業' && !a.isMaker);
             if (!targets.length) return 0;
             const msgs = getSavedMessages();
+            const at = new Date().toLocaleString();
             targets.forEach(a => {
                 msgs.unshift({
                     senderId: 'official_system',
                     senderName: senderLabel || '【公式】出欠連絡',
                     receiverId: String(a.id),
                     content: text,
-                    date: new Date().toLocaleString(),
+                    date: at,
                     isOfficial: true
                 });
             });
+            if (keepSenderCopy && currentUser) {
+                msgs.unshift({
+                    senderId: String(currentUser.id),
+                    senderName: String(currentUser.name || ""),
+                    receiverId: 'official_system',
+                    content: text,
+                    date: at,
+                    isOfficial: true,
+                    broadcastCopy: true
+                });
+            }
             saveSavedMessages(msgs);
             return targets.length;
         }
@@ -5659,6 +5673,10 @@ ${senderUser.name} 様
         }
         function dmPartnerName(id) {
             if (String(id) === 'official') return '🏫 運営（公式）';
+            if (String(id) === 'official_system') {
+                const sysMsg = (getSavedMessages() || []).find(m => m && String(m.senderId || '') === 'official_system');
+                return (sysMsg && sysMsg.senderName) ? String(sysMsg.senderName) : '📣 一斉通知';
+            }
             const acc = getSavedAccounts().find(a => String(a.id) === String(id));
             return acc ? String(acc.name || '') : 'ID:' + String(id);
         }
@@ -5671,9 +5689,9 @@ ${senderUser.name} 様
                 if (!m) return;
                 const senderId = String(m.senderId || '');
                 const receiverId = String(m.receiverId || '');
-                if (senderId === 'official' && receiverId === 'ALL') return;
                 let partner = '';
-                if (senderId === myId) partner = receiverId;
+                if (receiverId === 'ALL') partner = 'official';
+                else if (senderId === myId) partner = receiverId;
                 else if (receiverId === myId) partner = senderId;
                 else return;
                 if (!partner || partner === myId) return;
@@ -5752,7 +5770,22 @@ ${senderUser.name} 様
             if (wrap) wrap.classList.add('dm-thread-open');
             if (threadView) threadView.style.display = '';
             if (placeholder) placeholder.style.display = 'none';
+            try { markDmThreadRead_(String(partnerId)); } catch (e) {}
             renderDmThread();
+        }
+
+        function markDmThreadRead_(partner) {
+            const myId = currentUser ? String(currentUser.id) : '';
+            partner = String(partner || '');
+            if (!myId || !partner || partner === 'official' || partner === 'official_system') return;
+            const msgs = getSavedMessages();
+            let changed = false;
+            msgs.forEach(m => {
+                if (!m || String(m.senderId || '') !== partner || String(m.receiverId || '') !== myId) return;
+                const rb = Array.isArray(m.readBy) ? m.readBy.map(String) : [];
+                if (rb.indexOf(myId) < 0) { rb.push(myId); m.readBy = rb; changed = true; }
+            });
+            if (changed) saveSavedMessages(msgs);
         }
 
         function closeDmThread() {
@@ -5763,14 +5796,22 @@ ${senderUser.name} 様
         function renderDmThread() {
             const partner = String(window.__dmThreadPartner || '');
             if (!partner) return;
+            try { markDmThreadRead_(partner); } catch (e) {}
             const titleEl = document.getElementById('dm-thread-title');
             const bodyEl = document.getElementById('dm-thread-messages');
             if (!bodyEl) return;
             if (titleEl) titleEl.textContent = '💬 ' + dmPartnerName(partner);
             const myId = currentUser ? String(currentUser.id) : '';
+            const isMakerUser = !!(currentUser && (currentUser.isMaker || currentUser.role === '作成者'));
+            const canReply = partner !== 'official_system' && !(partner === 'official' && !isMakerUser);
+            const inputBlock = document.getElementById('dm-thread-input-block');
+            if (inputBlock) inputBlock.style.display = canReply ? '' : 'none';
             const msgs = (getSavedMessages() || []).filter(m => {
                 if (!m) return false;
                 const s = String(m.senderId || ''), r = String(m.receiverId || '');
+                if (partner === 'official') {
+                    return r === 'ALL' || (s === myId && r === 'official') || (s === 'official' && r === myId);
+                }
                 return (s === myId && r === partner) || (s === partner && r === myId);
             }).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
             if (!msgs.length) {
@@ -5784,6 +5825,7 @@ ${senderUser.name} 様
                     + `<div class="dm-bubble ${mine ? 'dm-bubble-mine' : 'dm-bubble-other'}">`
                     + `<div style="font-size:0.68rem; color:#888;">${escapeHTML(m.senderName || '')} ${escapeHTML(m.date || '')}</div>`
                     + `<div style="white-space:pre-wrap;">${linkifyDmContent(m.content)}</div>`
+                    + (mine ? `<div style="font-size:0.66rem; color:#1976d2; text-align:right; margin-top:2px; min-height:0.9em;">${(Array.isArray(m.readBy) && m.readBy.map(String).indexOf(partner) >= 0) ? '開封済み' : ''}</div>` : '')
                     + (isDmImageMsg(m) ? `<div style="margin-top:6px;"><img data-dmfile="${escapeHTML(m.attachFileId)}" alt="${escapeHTML(m.attachName || '画像')}" style="max-width:100%; max-height:280px; border-radius:8px; cursor:zoom-in;" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '画像')}')"></div>` : '')
                     + (!isDmImageMsg(m) && m.attachFileId ? `<div style="margin-top:6px;"><button type="button" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '添付ファイル')}')">📎 ${escapeHTML(m.attachName || '添付ファイル')} を開く</button></div>` : '')
                     + (m.attachmentType === 'application/pdf' && m.attachmentFileId ? `<div style="margin-top:6px;"><button type="button" onclick="openProtectedManual('${escapeHTML(m.attachmentFileId)}','${escapeHTML(m.attachmentName || 'manual.pdf')}')">📎 マニュアルPDFを開く（${escapeHTML(m.manualVersion || '')}）</button></div>` : '')
@@ -6055,7 +6097,7 @@ ${senderUser.name} 様
             if (!(await checkSecondaryPass('advisor_dm_broadcast', pass))) return alert('認証キーが正しくありません。');
             if (!confirm('全員に一斉送信します。よろしいですか？')) return;
             try {
-                notifyAllMembers(text, '【公式】顧問一斉連絡');
+                notifyAllMembers(text, '【公式】顧問一斉連絡', true);
                 if (ta) ta.value = '';
                 if (pe) pe.value = '';
                 showToast('全員に一斉送信しました');
