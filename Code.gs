@@ -929,8 +929,8 @@ function apiSaveData(key, jsonValue, token, baseRev) {
     system_practices: isMaker || session.isAdvisor,
     system_last_promotion_year: isMaker,
     system_advisor_reset_year: isMaker,
-    system_accounting_docs: isMaker || !!session.isTreasurer,
-    system_accounting_state: isMaker || !!session.isTreasurer,
+    system_accounting_docs: isMaker || !!session.isTreasurer || session.isAdvisor || isAdminToolUnlocked_('accounting', session.id),
+    system_accounting_state: isMaker || !!session.isTreasurer || isAdminToolUnlocked_('accounting', session.id),
     system_attendance_alert_state: isMaker || session.isAdvisor || session.isCaptain
   };
   if (Object.prototype.hasOwnProperty.call(permissionMap, key) && !permissionMap[key]) {
@@ -2129,8 +2129,16 @@ function verifyAdminToolCredentials(token, tool, id, password) {
     return { ok: false, message: '専用IDまたはパスワードが正しくありません。' };
   }
   cache.remove(failKey);
+  try { cache.put('ADMTOOL_' + key + '_' + String(session.id), '1', 1800); } catch (e) {}
   appendAudit_(session.id, '管理者ツール認証', key, '');
   return { ok: true, tool: key };
+}
+
+/** 管理者ツールの専用ID認証が有効か（30分） */
+function isAdminToolUnlocked_(tool, userId) {
+  try {
+    return CacheService.getScriptCache().get('ADMTOOL_' + String(tool) + '_' + String(userId)) === '1';
+  } catch (e) { return false; }
 }
 
 

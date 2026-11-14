@@ -24,6 +24,25 @@
         
         .sync-btn, .login-header-btn, .menu-item-btn, .admin-btn { background: #000; color: #fff; border: 1px solid #000; padding: 8px; font-weight: bold; font-size: 0.85rem; cursor: pointer; text-align: center; border-radius: 4px; width: 100%; }
         .sync-btn:active, .login-header-btn:active { background: #333; }
+        /* ===== DM トーク（LINE風 2ペイン） ===== */
+        #dm-talk-wrap { display: flex; gap: 10px; align-items: flex-start; }
+        #dm-channel-list { flex: 0 0 34%; min-width: 170px; max-width: 340px; }
+        #dm-thread-pane { flex: 1 1 auto; min-width: 0; }
+        .dm-chan-item { display: flex; gap: 8px; padding: 8px 6px; border-bottom: 1px solid #eee; cursor: pointer; border-radius: 6px; align-items: center; }
+        .dm-chan-item:hover { background: #f0f7ff; }
+        .dm-chan-item:last-child { border-bottom: none; }
+        .dm-chan-avatar { width: 38px; height: 38px; border-radius: 50%; background: #007bff; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: bold; flex: 0 0 38px; font-size: 0.95rem; }
+        .dm-chan-body { min-width: 0; flex: 1; }
+        .dm-chan-name { font-weight: bold; font-size: 0.85rem; }
+        .dm-chan-preview { font-size: 0.78rem; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .dm-bubble { display: inline-block; max-width: 82%; border-radius: 14px; padding: 8px 12px; text-align: left; font-size: 0.9rem; box-shadow: 0 1px 1px rgba(0,0,0,0.08); }
+        .dm-bubble-mine { background: #8de055; }
+        .dm-bubble-other { background: #fff; border: 1px solid #e0e0e0; }
+        @media (max-width: 700px) {
+            #dm-talk-wrap { display: block; }
+            #dm-channel-list { max-width: none; }
+            #dm-talk-wrap.dm-thread-open #dm-channel-list { display: none; }
+        }
         .admin-btn.advisor { background: #28a745; border-color: #28a745; }
         .admin-btn.captain { background: #007bff; border-color: #007bff; }
         .admin-btn.maker-admin { background: #6f42c1; border-color: #6f42c1; }
@@ -315,6 +334,15 @@
                 </div>
                 <button class="btn-primary" style="background:#28a745; width:100%;" onclick="uploadYearlyPlanByAdvisor()">年度予定をアップロード・更新</button>
                 <div class="vacation-editor-slot"></div>
+            </div>
+
+            <div class="dev-section advisor-box" style="border-color:#00897b; background:#f2fbf9;">
+                <h3 style="color:#00897b;">🧾 購入レシート写真の提出（会計）</h3>
+                <p style="font-size:0.78rem; color:#555;">購入レシトの写真を会計へ提出します（金額0円の場合は写真不要）。提出済み一覧は「会計」ページで確認できます。</p>
+                <div class="form-group"><label>金額（円・数値で入力）</label><input type="number" id="adv-receipt-amount" min="0" step="1" placeholder="例: 12500"></div>
+                <div class="form-group"><label>対象年度</label><input type="number" id="adv-receipt-year" min="2020" max="2100"></div>
+                <div class="form-group"><label>レシート写真（画像）</label><input type="file" id="adv-receipt-file" accept="image/*"></div>
+                <button class="btn-primary" style="background:#00897b; width:100%;" onclick="submitReceiptByAdvisor()">レシートを提出する</button>
             </div>
 
             <div class="dev-section advisor-box">
@@ -714,6 +742,7 @@
                 <button id="btn-admin-captain" class="admin-btn captain" style="display:none;" onclick="openAdminAuthModal('captain')">👑 管理者ツール（主将）</button>
                 <button id="btn-admin-maker" class="admin-btn maker-admin" style="display:none;" onclick="openAdminAuthModal('maker-admin')">🛡 管理者ツール（作成者）</button>
                 <button id="btn-dev-tool" class="admin-btn maker-dev" style="display:none;" onclick="openAdminAuthModal('maker-dev')">🛠 作成者ツール</button>
+                <button id="btn-admin-accounting" class="admin-btn" style="display:none; background:#00897b; color:#fff;" onclick="openAdminAuthModal('accounting')">💰 管理者ツール（会計）</button>
 
                 <button id="auth-btn" class="login-header-btn" onclick="handleAuthButtonClick()">ログイン</button>
             </div>
@@ -829,8 +858,11 @@
                     </div>
 
                     <h2>💬 トーク（やり取り一覧）</h2>
-                    <div id="dm-channel-list" class="update-box" style="padding:6px 10px;"></div>
-                    <div id="dm-thread-view" style="display:none;">
+                    <div id="dm-talk-wrap">
+                        <div id="dm-channel-list" class="update-box" style="padding:6px;"></div>
+                        <div id="dm-thread-pane">
+                            <div id="dm-thread-placeholder" class="update-box" style="padding:24px 10px; text-align:center; color:#888;">💬 左側のトークを選択するとやり取りが表示されます</div>
+                            <div id="dm-thread-view" style="display:none;">
                         <div class="form-block" style="border-color:#007bff;">
                             <h3 id="dm-thread-title" style="color:#007bff;"></h3>
                             <div id="dm-thread-messages" style="max-height:420px; overflow-y:auto; background:#fafafa; border:1px solid #eee; border-radius:6px; padding:10px;"></div>
@@ -840,6 +872,8 @@
                             </div>
                             <button class="submit-btn" onclick="sendThreadReply()">送信する</button>
                             <button type="button" class="login-header-btn" style="margin-top:6px;" onclick="closeDmThread()">← 一覧に戻る</button>
+                        </div>
+                    </div>
                         </div>
                     </div>
                     <h2>受信・参加中のメッセージ一覧</h2>
@@ -859,7 +893,6 @@
                             <select id="accounting-type" onchange="updateAccountingFormByType()">
                                 <option value="budget">年度予算（PDF）</option>
                                 <option value="final">年度決算（PDF）</option>
-                                <option value="receipt">購入レシート（写真）</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -1533,6 +1566,7 @@
         }
         function isAccountingEditor() {
             if (!currentUser) return false;
+            if (typeof hasAdminToolAccess === 'function' && hasAdminToolAccess('accounting')) return true;
             // 会計ツールの権限は「前年度会計」（毎年1月1日に交代）と作成者のみ
             return !!(currentUser.isMaker || currentUser.role === '作成者' || currentUser.isTreasurer === true);
         }
@@ -1661,6 +1695,41 @@
             if (document.getElementById('accounting-amount')) document.getElementById('accounting-amount').value = '';
             if (fileEl) fileEl.value = '';
             alert('💰 ' + accountingTypeLabel(type) + 'を ' + amount.toLocaleString() + '円で計上しました。');
+            renderAccounting();
+        }
+
+        async function submitReceiptByAdvisor() {
+            if (!currentUser) return alert('ログインしてください。');
+            if (!(currentUser.isAdvisor || currentUser.isMaker || currentUser.role === '作成者')) return alert('レシートの提出は顧問（または作成者）のみです。');
+            const amountRaw = document.getElementById('adv-receipt-amount').value;
+            const amount = Number(amountRaw === '' ? 0 : amountRaw);
+            if (!isFinite(amount) || amount < 0) return alert('金額は0以上の数値で入力してください。');
+            const year = Number(document.getElementById('adv-receipt-year').value) || acctFiscalYear();
+            const fileEl = document.getElementById('adv-receipt-file');
+            const file = fileEl && fileEl.files ? fileEl.files[0] : null;
+            if (amount > 0 && !file) return alert('金額が1円以上のときはレシート写真が必要です。');
+            if (file && String(file.type || '').indexOf('image/') !== 0) return alert('レシートは画像ファイル（写真）を選択してください。');
+            if (file && file.size > 12 * 1024 * 1024) return alert('ファイルは12MB以下にしてください。');
+            let uploaded = null;
+            try {
+                if (file) uploaded = await uploadProtectedFileToDrive(file);
+            } catch (e) { return alert('アップロードに失敗しました: ' + e.message); }
+            const docs = getAccountingDocs();
+            docs.unshift({
+                id: 'acct_' + Date.now(),
+                type: 'receipt',
+                year: year,
+                amount: amount,
+                driveFileId: uploaded ? uploaded.fileId : '',
+                fileName: uploaded ? uploaded.fileName : '',
+                mimeType: uploaded ? (uploaded.mimeType || '') : '',
+                uploadedBy: currentUser.name,
+                uploadedAt: new Date().toLocaleString()
+            });
+            saveAccountingDocs(docs);
+            if (document.getElementById('adv-receipt-amount')) document.getElementById('adv-receipt-amount').value = '';
+            if (fileEl) fileEl.value = '';
+            alert('🧾 レシートを ' + amount.toLocaleString() + '円で提出しました。');
             renderAccounting();
         }
 
@@ -5424,7 +5493,8 @@ ${senderUser.name} 様
             const isCaptainUser = isMakerUser || isToinkaiOnly || String(currentUser.id) === String(sanyi.captainId) ||
                 String(currentUser.id) === String(sanyi.vice1Id) || String(currentUser.id) === String(sanyi.vice2Id);
             const allowed = type === 'advisor' ? (isMakerUser || currentUser.isAdvisor || currentUser.id === '000001') :
-                type === 'captain' ? isCaptainUser : isMakerUser;
+                type === 'captain' ? isCaptainUser :
+                type === 'accounting' ? true : isMakerUser;
             if (!allowed) return alert('この機能を利用する権限がありません。');
             // 入室前の専用ID・パスワード認証（30分間有効）
             if (!hasAdminToolAccess(type)) { requestAdminToolAccess(type); return; }
@@ -5463,6 +5533,7 @@ ${senderUser.name} 様
         }
 
         const ADMIN_TOOL_META = {
+            'accounting': { key: 'accounting', label: '💰 管理ツール（会計）' },
             captain: { key: 'captain', label: '👑 主将ツール' },
             advisor: { key: 'advisor', label: '👨‍🏫 顧問ツール' },
             'maker-admin': { key: 'maker', label: '🛡 管理者ツール（作成者）' },
@@ -5567,13 +5638,15 @@ ${senderUser.name} 様
                         html += `
                             <div class="contact-card">
                                 <div class="c-header">差出人: ${escapeHTML(m.senderName)} (${escapeHTML(m.date)})</div>
-                                <div style="white-space:pre-wrap;">${escapeHTML(m.content)}</div>
+                                <div style="white-space:pre-wrap;">${linkifyDmContent(m.content)}</div>
+                                ${(m.attachType && String(m.attachType).indexOf('image/') === 0 && m.attachFileId) ? `<div style="margin-top:8px;"><img data-dmfile="${escapeHTML(m.attachFileId)}" alt="${escapeHTML(m.attachName || '画像')}" style="max-width:100%; max-height:280px; border-radius:8px; cursor:zoom-in;" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '画像')}')"></div>` : ''}
                                 ${m.attachFileId ? `<div style="margin-top:8px;"><button type="button" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '添付ファイル')}')">📎 ${escapeHTML(m.attachName || '添付ファイル')} を開く</button>${m.attachAiFlag ? '<span style="color:#d9534f; font-size:0.78rem; margin-left:6px;">AI警告あり</span>' : ''}</div>` : ''}
                                 ${m.attachmentType === 'application/pdf' && m.attachmentFileId ? `<div style="margin-top:8px;"><button type="button" onclick="openProtectedManual('${escapeHTML(m.attachmentFileId)}','${escapeHTML(m.attachmentName || 'manual.pdf')}')">📎 マニュアルPDFを開く（${escapeHTML(m.manualVersion || '')}）</button></div>` : (m.attachmentDataUrl && m.attachmentType === 'application/pdf' ? `<div style="margin-top:8px;"><a href="${m.attachmentDataUrl}" target="_blank" rel="noopener" download="${escapeHTML(m.attachmentName || 'manual.pdf')}">📎 マニュアルPDFを開く（${escapeHTML(m.manualVersion || '')}）</a></div>` : '')}
                             </div>
                         `;
                     });
                     historyContainer.innerHTML = html;
+                    try { hydrateDmImages(historyContainer); } catch (e) {}
                 }
             }
             const officialBox = document.getElementById('dm-official-block');
@@ -5610,11 +5683,46 @@ ${senderUser.name} 様
                 .sort((a, b) => String(b.last.date || '').localeCompare(String(a.last.date || '')));
         }
 
+        function linkifyDmContent(text) {
+            const safe = escapeHTML(text || '');
+            return safe.replace(/(https?:\/\/[^\s<>"'）)\]]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#007bff; word-break:break-all;">$1</a>');
+        }
+
+        const dmImageBlobCache = {};
+        function hydrateDmImages(root) {
+            if (!root) return;
+            const imgs = root.querySelectorAll('img[data-dmfile]');
+            Array.prototype.forEach.call(imgs, img => {
+                const fid = img.getAttribute('data-dmfile');
+                if (!fid) return;
+                if (dmImageBlobCache[fid]) { img.src = dmImageBlobCache[fid]; return; }
+                if (img.dataset.loading === '1') return;
+                img.dataset.loading = '1';
+                gasRun('getProtectedFile', fid, gasToken()).then(res => {
+                    if (!res || !res.ok || !res.base64) return;
+                    const raw = atob(res.base64);
+                    const bytes = new Uint8Array(raw.length);
+                    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+                    const url = URL.createObjectURL(new Blob([bytes], { type: res.mimeType || 'image/png' }));
+                    dmImageBlobCache[fid] = url;
+                    img.src = url;
+                }).catch(() => {});
+            });
+        }
+
+        function isDmImageMsg(m) {
+            return !!(m && m.attachFileId && m.attachType && String(m.attachType).indexOf('image/') === 0);
+        }
+
         function renderDmChannels() {
             const listEl = document.getElementById('dm-channel-list');
-            const viewEl = document.getElementById('dm-thread-view');
+            const wrap = document.getElementById('dm-talk-wrap');
+            const threadView = document.getElementById('dm-thread-view');
+            const placeholder = document.getElementById('dm-thread-placeholder');
             if (!listEl) return;
-            if (viewEl) viewEl.style.display = 'none';
+            if (wrap) wrap.classList.remove('dm-thread-open');
+            if (threadView) threadView.style.display = 'none';
+            if (placeholder) placeholder.style.display = 'block';
             listEl.style.display = '';
             const chans = dmChannels();
             if (!chans.length) {
@@ -5623,11 +5731,14 @@ ${senderUser.name} 様
             }
             let html = '';
             chans.forEach(c => {
+                const name = dmPartnerName(c.partner);
+                const initial = (name || '?').replace(/^ID:/, '#').slice(0, 1);
                 const preview = String(c.last.content || '').replace(/\s+/g, ' ').slice(0, 40);
-                html += `<div class="contact-card" style="cursor:pointer;" onclick="openDmThread('${escapeHTML(c.partner)}')">`
-                    + `<div class="c-header"><strong>${escapeHTML(dmPartnerName(c.partner))}</strong>`
-                    + `<span style="float:right; font-size:0.75rem; color:#777;">${escapeHTML(c.last.date || '')}</span></div>`
-                    + `<div style="font-size:0.85rem; color:#555; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(preview)}</div>`
+                html += `<div class="dm-chan-item" onclick="openDmThread('${escapeHTML(c.partner)}')">`
+                    + `<div class="dm-chan-avatar">${escapeHTML(initial)}</div>`
+                    + `<div class="dm-chan-body"><div class="dm-chan-name">${escapeHTML(name)}</div>`
+                    + `<div class="dm-chan-preview">${escapeHTML(preview)}</div></div>`
+                    + `<div style="font-size:0.68rem; color:#999; flex:0 0 auto; text-align:right;">${escapeHTML(c.last.date || '')}</div>`
                     + `</div>`;
             });
             listEl.innerHTML = html;
@@ -5635,10 +5746,12 @@ ${senderUser.name} 様
 
         function openDmThread(partnerId) {
             window.__dmThreadPartner = String(partnerId);
-            const listEl = document.getElementById('dm-channel-list');
-            const viewEl = document.getElementById('dm-thread-view');
-            if (listEl) listEl.style.display = 'none';
-            if (viewEl) viewEl.style.display = '';
+            const wrap = document.getElementById('dm-talk-wrap');
+            const threadView = document.getElementById('dm-thread-view');
+            const placeholder = document.getElementById('dm-thread-placeholder');
+            if (wrap) wrap.classList.add('dm-thread-open');
+            if (threadView) threadView.style.display = '';
+            if (placeholder) placeholder.style.display = 'none';
             renderDmThread();
         }
 
@@ -5667,17 +5780,18 @@ ${senderUser.name} 様
             let html = '';
             msgs.forEach(m => {
                 const mine = String(m.senderId || '') === myId;
-                const bg = mine ? '#dff1ff' : '#f1f0f0';
                 html += `<div style="text-align:${mine ? 'right' : 'left'}; margin:6px 0;">`
-                    + `<div style="display:inline-block; max-width:80%; background:${bg}; border-radius:12px; padding:8px 12px; text-align:left;">`
-                    + `<div style="font-size:0.7rem; color:#888;">${escapeHTML(m.senderName || '')} ${escapeHTML(m.date || '')}</div>`
-                    + `<div style="white-space:pre-wrap;">${escapeHTML(m.content || '')}</div>`
-                    + (m.attachFileId ? `<div style="margin-top:6px;"><button type="button" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '添付ファイル')}')">📎 ${escapeHTML(m.attachName || '添付ファイル')} を開く</button></div>` : '')
+                    + `<div class="dm-bubble ${mine ? 'dm-bubble-mine' : 'dm-bubble-other'}">`
+                    + `<div style="font-size:0.68rem; color:#888;">${escapeHTML(m.senderName || '')} ${escapeHTML(m.date || '')}</div>`
+                    + `<div style="white-space:pre-wrap;">${linkifyDmContent(m.content)}</div>`
+                    + (isDmImageMsg(m) ? `<div style="margin-top:6px;"><img data-dmfile="${escapeHTML(m.attachFileId)}" alt="${escapeHTML(m.attachName || '画像')}" style="max-width:100%; max-height:280px; border-radius:8px; cursor:zoom-in;" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '画像')}')"></div>` : '')
+                    + (!isDmImageMsg(m) && m.attachFileId ? `<div style="margin-top:6px;"><button type="button" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '添付ファイル')}')">📎 ${escapeHTML(m.attachName || '添付ファイル')} を開く</button></div>` : '')
                     + (m.attachmentType === 'application/pdf' && m.attachmentFileId ? `<div style="margin-top:6px;"><button type="button" onclick="openProtectedManual('${escapeHTML(m.attachmentFileId)}','${escapeHTML(m.attachmentName || 'manual.pdf')}')">📎 マニュアルPDFを開く（${escapeHTML(m.manualVersion || '')}）</button></div>` : '')
                     + `</div></div>`;
             });
             bodyEl.innerHTML = html;
             bodyEl.scrollTop = bodyEl.scrollHeight;
+            hydrateDmImages(bodyEl);
         }
 
         function sendThreadReply() {
@@ -5748,6 +5862,7 @@ ${senderUser.name} 様
             const btnCaptain = document.getElementById('btn-admin-captain');
             const btnMakerAdmin = document.getElementById('btn-admin-maker');
             const btnDevTool = document.getElementById('btn-dev-tool');
+            const btnAccounting = document.getElementById('btn-admin-accounting');
 
             const menuDm = document.getElementById('menu-dm-item');
             const menuToinkai = document.getElementById('menu-toinkai-item');
@@ -5771,6 +5886,7 @@ ${senderUser.name} 様
                     if (btnCaptain) btnCaptain.style.display = "block";
                     if (btnMakerAdmin) btnMakerAdmin.style.display = "none";
                     if (btnDevTool) btnDevTool.style.display = "none";
+                    if (btnAccounting) btnAccounting.style.display = "block";
                     if (userDisp) userDisp.innerText = `${currentUser.name} 様（旧主将・原稿提出のみ）`;
                     return;
                 }
@@ -5783,6 +5899,7 @@ ${senderUser.name} 様
                 if (btnCaptain) btnCaptain.style.display = isCaptain ? "block" : "none";
                 if (btnMakerAdmin) btnMakerAdmin.style.display = isMakerUser ? "block" : "none";
                 if (btnDevTool) btnDevTool.style.display = isMakerUser ? "block" : "none";
+                if (btnAccounting) btnAccounting.style.display = "block";
 
                 const reselectBlock = document.getElementById('class-reselect-block');
                 const accClass = document.getElementById('acc-class');
@@ -5803,6 +5920,7 @@ ${senderUser.name} 様
                 if (btnCaptain) btnCaptain.style.display = "none";
                 if (btnMakerAdmin) btnMakerAdmin.style.display = "none";
                 if (btnDevTool) btnDevTool.style.display = "none";
+                if (btnAccounting) btnAccounting.style.display = "none";
             }
             renderDMUI();
             renderHomeContactBlock();
@@ -6291,7 +6409,8 @@ ${senderUser.name} 様
         if (!f) return;
         const receiverId = recvEl ? recvEl.value : '';
         if (!receiverId) return alert('送信先のお相手を選択してください。');
-        if (receiverId === 'official') return alert('⚠️ 【公式】アカウントへの個別メッセージ送信は制限されています。');
+        const isMakerSenderFile = currentUser && (currentUser.isMaker || currentUser.role === '作成者');
+        if (receiverId === 'official' && !isMakerSenderFile) return alert('⚠️ 【公式】アカウントへの個別メッセージ送信は制限されています。');
         if (f.size > 12 * 1024 * 1024) return alert('ファイルは12MB以下にしてください。');
         const note = contentEl ? contentEl.value.trim() : '';
         try {
