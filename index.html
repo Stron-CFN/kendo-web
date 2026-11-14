@@ -5494,7 +5494,7 @@ ${senderUser.name} 様
                 String(currentUser.id) === String(sanyi.vice1Id) || String(currentUser.id) === String(sanyi.vice2Id);
             const allowed = type === 'advisor' ? (isMakerUser || currentUser.isAdvisor || currentUser.id === '000001') :
                 type === 'captain' ? isCaptainUser :
-                type === 'accounting' ? true : isMakerUser;
+                type === 'accounting' ? (isMakerUser || currentUser.isTreasurer === true || currentUser.role === '\u4f1a\u8a08') : isMakerUser;
             if (!allowed) return alert('この機能を利用する権限がありません。');
             // 入室前の専用ID・パスワード認証（30分間有効）
             if (!hasAdminToolAccess(type)) { requestAdminToolAccess(type); return; }
@@ -5886,7 +5886,7 @@ ${senderUser.name} 様
                     if (btnCaptain) btnCaptain.style.display = "block";
                     if (btnMakerAdmin) btnMakerAdmin.style.display = "none";
                     if (btnDevTool) btnDevTool.style.display = "none";
-                    if (btnAccounting) btnAccounting.style.display = "block";
+                    if (btnAccounting) btnAccounting.style.display = "none";
                     if (userDisp) userDisp.innerText = `${currentUser.name} 様（旧主将・原稿提出のみ）`;
                     return;
                 }
@@ -5899,7 +5899,7 @@ ${senderUser.name} 様
                 if (btnCaptain) btnCaptain.style.display = isCaptain ? "block" : "none";
                 if (btnMakerAdmin) btnMakerAdmin.style.display = isMakerUser ? "block" : "none";
                 if (btnDevTool) btnDevTool.style.display = isMakerUser ? "block" : "none";
-                if (btnAccounting) btnAccounting.style.display = "block";
+                if (btnAccounting) btnAccounting.style.display = (isMakerUser || currentUser.isTreasurer === true || currentUser.role === '\u4f1a\u8a08') ? "block" : "none";
 
                 const reselectBlock = document.getElementById('class-reselect-block');
                 const accClass = document.getElementById('acc-class');
