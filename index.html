@@ -803,6 +803,16 @@
                             <textarea id="dm-content-input" rows="3" placeholder="メッセージを入力してください"></textarea>
                         </div>
                         <button class="submit-btn" onclick="sendDirectMessage()">送信する</button>
+
+                    <div id="dm-official-block" class="form-block" style="border-color:#00897b; display:none;">
+                        <h3 style="color:#00897b;">🏫 運営への個別連絡（作成者専用）</h3>
+                        <p style="font-size:0.8rem; color:#555; margin:0 0 8px;">作成者から運営（公式アカウント）へ個人として連絡できます。やり取りは下の「💬 トーク」の運営チャネルで確認できます。</p>
+                        <div class="form-group">
+                            <label>メッセージ本文</label>
+                            <textarea id="dm-official-input" rows="3" placeholder="運営への連絡内容を入力"></textarea>
+                        </div>
+                        <button class="submit-btn" style="background:#00897b;" onclick="sendOfficialMessage()">運営へ送信する</button>
+                    </div>
                     </div>
 
                     <div class="form-block" style="border-color:#9c27b0;">
@@ -818,6 +828,20 @@
                         <button class="submit-btn" style="background:#9c27b0;" onclick="createCustomGroupDM()">グループDMを開設する</button>
                     </div>
 
+                    <h2>💬 トーク（やり取り一覧）</h2>
+                    <div id="dm-channel-list" class="update-box" style="padding:6px 10px;"></div>
+                    <div id="dm-thread-view" style="display:none;">
+                        <div class="form-block" style="border-color:#007bff;">
+                            <h3 id="dm-thread-title" style="color:#007bff;"></h3>
+                            <div id="dm-thread-messages" style="max-height:420px; overflow-y:auto; background:#fafafa; border:1px solid #eee; border-radius:6px; padding:10px;"></div>
+                            <div class="form-group" style="margin-top:10px;">
+                                <label>メッセージ</label>
+                                <textarea id="dm-thread-input" rows="2" placeholder="メッセージを入力"></textarea>
+                            </div>
+                            <button class="submit-btn" onclick="sendThreadReply()">送信する</button>
+                            <button type="button" class="login-header-btn" style="margin-top:6px;" onclick="closeDmThread()">← 一覧に戻る</button>
+                        </div>
+                    </div>
                     <h2>受信・参加中のメッセージ一覧</h2>
                     <div id="dm-received-history"><p class="no-data-msg">受信メッセージはありません。</p></div>
                 </div>
@@ -3467,7 +3491,8 @@ ${senderUser.name} 様
             if (!receiverId) return alert("送信先のお相手を選択してください。");
             if (!content) return alert("メッセージ本文を入力してください。");
 
-            if (receiverId === 'official') {
+            const isMakerSender = currentUser && (currentUser.isMaker || currentUser.role === '作成者');
+            if (receiverId === 'official' && !isMakerSender) {
                 return alert("⚠️ 【公式】アカウントへの個別メッセージ送信は制限されています。ご質問・ご連絡はホーム画面下の「お問い合わせ欄」をご利用ください。");
             }
 
@@ -5521,6 +5546,9 @@ ${senderUser.name} 様
                     }
                 }
             });
+            if (currentUser && (currentUser.isMaker || currentUser.role === '作成者')) {
+                selectHtml += '<option value="official">🏫 運営（公式）</option>';
+            }
             if (select) select.innerHTML = selectHtml;
 
             const sanyi = getSanyiData();
@@ -5548,8 +5576,162 @@ ${senderUser.name} 様
                     historyContainer.innerHTML = html;
                 }
             }
+            const officialBox = document.getElementById('dm-official-block');
+            if (officialBox) officialBox.style.display = isMakerUser ? 'block' : 'none';
+            if (typeof renderDmChannels === 'function') {
+                if (window.__dmThreadPartner) { try { renderDmThread(); } catch (e) {} }
+                else { try { renderDmChannels(); } catch (e) {} }
+            }
             renderCustomGroupMemberList();
         }
+        function dmPartnerName(id) {
+            if (String(id) === 'official') return '🏫 運営（公式）';
+            const acc = getSavedAccounts().find(a => String(a.id) === String(id));
+            return acc ? String(acc.name || '') : 'ID:' + String(id);
+        }
+
+        function dmChannels() {
+            const myId = currentUser ? String(currentUser.id) : '';
+            const msgs = getSavedMessages() || [];
+            const map = {};
+            msgs.forEach(m => {
+                if (!m) return;
+                const senderId = String(m.senderId || '');
+                const receiverId = String(m.receiverId || '');
+                if (senderId === 'official' && receiverId === 'ALL') return;
+                let partner = '';
+                if (senderId === myId) partner = receiverId;
+                else if (receiverId === myId) partner = senderId;
+                else return;
+                if (!partner || partner === myId) return;
+                if (!map[partner] || String(m.date || '') > String(map[partner].date || '')) map[partner] = m;
+            });
+            return Object.keys(map).map(p => ({ partner: p, last: map[p] }))
+                .sort((a, b) => String(b.last.date || '').localeCompare(String(a.last.date || '')));
+        }
+
+        function renderDmChannels() {
+            const listEl = document.getElementById('dm-channel-list');
+            const viewEl = document.getElementById('dm-thread-view');
+            if (!listEl) return;
+            if (viewEl) viewEl.style.display = 'none';
+            listEl.style.display = '';
+            const chans = dmChannels();
+            if (!chans.length) {
+                listEl.innerHTML = '<p class="no-data-msg" style="margin:4px 0;">まだやり取りはありません。「✉️ 個別メッセージを送信」から話しかけてみましょう。</p>';
+                return;
+            }
+            let html = '';
+            chans.forEach(c => {
+                const preview = String(c.last.content || '').replace(/\s+/g, ' ').slice(0, 40);
+                html += `<div class="contact-card" style="cursor:pointer;" onclick="openDmThread('${escapeHTML(c.partner)}')">`
+                    + `<div class="c-header"><strong>${escapeHTML(dmPartnerName(c.partner))}</strong>`
+                    + `<span style="float:right; font-size:0.75rem; color:#777;">${escapeHTML(c.last.date || '')}</span></div>`
+                    + `<div style="font-size:0.85rem; color:#555; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(preview)}</div>`
+                    + `</div>`;
+            });
+            listEl.innerHTML = html;
+        }
+
+        function openDmThread(partnerId) {
+            window.__dmThreadPartner = String(partnerId);
+            const listEl = document.getElementById('dm-channel-list');
+            const viewEl = document.getElementById('dm-thread-view');
+            if (listEl) listEl.style.display = 'none';
+            if (viewEl) viewEl.style.display = '';
+            renderDmThread();
+        }
+
+        function closeDmThread() {
+            window.__dmThreadPartner = null;
+            renderDmChannels();
+        }
+
+        function renderDmThread() {
+            const partner = String(window.__dmThreadPartner || '');
+            if (!partner) return;
+            const titleEl = document.getElementById('dm-thread-title');
+            const bodyEl = document.getElementById('dm-thread-messages');
+            if (!bodyEl) return;
+            if (titleEl) titleEl.textContent = '💬 ' + dmPartnerName(partner);
+            const myId = currentUser ? String(currentUser.id) : '';
+            const msgs = (getSavedMessages() || []).filter(m => {
+                if (!m) return false;
+                const s = String(m.senderId || ''), r = String(m.receiverId || '');
+                return (s === myId && r === partner) || (s === partner && r === myId);
+            }).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+            if (!msgs.length) {
+                bodyEl.innerHTML = '<p class="no-data-msg">まだやり取りはありません。下の入力欄からメッセージを送れます。</p>';
+                return;
+            }
+            let html = '';
+            msgs.forEach(m => {
+                const mine = String(m.senderId || '') === myId;
+                const bg = mine ? '#dff1ff' : '#f1f0f0';
+                html += `<div style="text-align:${mine ? 'right' : 'left'}; margin:6px 0;">`
+                    + `<div style="display:inline-block; max-width:80%; background:${bg}; border-radius:12px; padding:8px 12px; text-align:left;">`
+                    + `<div style="font-size:0.7rem; color:#888;">${escapeHTML(m.senderName || '')} ${escapeHTML(m.date || '')}</div>`
+                    + `<div style="white-space:pre-wrap;">${escapeHTML(m.content || '')}</div>`
+                    + (m.attachFileId ? `<div style="margin-top:6px;"><button type="button" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '添付ファイル')}')">📎 ${escapeHTML(m.attachName || '添付ファイル')} を開く</button></div>` : '')
+                    + (m.attachmentType === 'application/pdf' && m.attachmentFileId ? `<div style="margin-top:6px;"><button type="button" onclick="openProtectedManual('${escapeHTML(m.attachmentFileId)}','${escapeHTML(m.attachmentName || 'manual.pdf')}')">📎 マニュアルPDFを開く（${escapeHTML(m.manualVersion || '')}）</button></div>` : '')
+                    + `</div></div>`;
+            });
+            bodyEl.innerHTML = html;
+            bodyEl.scrollTop = bodyEl.scrollHeight;
+        }
+
+        function sendThreadReply() {
+            const partner = String(window.__dmThreadPartner || '');
+            if (!partner) return;
+            const input = document.getElementById('dm-thread-input');
+            const content = input ? input.value.trim() : '';
+            if (!content) return alert('メッセージ本文を入力してください。');
+            const receiverEl = document.getElementById('dm-receiver-select');
+            const contentEl = document.getElementById('dm-content-input');
+            if (!receiverEl || !contentEl) return;
+            if (receiverEl.value !== partner) {
+                let found = false;
+                for (let i = 0; i < receiverEl.options.length; i++) {
+                    if (receiverEl.options[i].value === partner) { found = true; break; }
+                }
+                if (!found) {
+                    const o = document.createElement('option');
+                    o.value = partner;
+                    o.textContent = dmPartnerName(partner);
+                    receiverEl.appendChild(o);
+                }
+                receiverEl.value = partner;
+            }
+            contentEl.value = content;
+            if (input) input.value = '';
+            sendDirectMessage();
+        }
+
+        function sendOfficialMessage() {
+            const input = document.getElementById('dm-official-input');
+            const content = input ? input.value.trim() : '';
+            if (!content) return alert('連絡内容を入力してください。');
+            const receiverEl = document.getElementById('dm-receiver-select');
+            const contentEl = document.getElementById('dm-content-input');
+            if (!receiverEl || !contentEl) return;
+            if (receiverEl.value !== 'official') {
+                let found = false;
+                for (let i = 0; i < receiverEl.options.length; i++) {
+                    if (receiverEl.options[i].value === 'official') { found = true; break; }
+                }
+                if (!found) {
+                    const o = document.createElement('option');
+                    o.value = 'official';
+                    o.textContent = '🏫 運営（公式）';
+                    receiverEl.appendChild(o);
+                }
+                receiverEl.value = 'official';
+            }
+            contentEl.value = content;
+            if (input) input.value = '';
+            sendDirectMessage();
+        }
+
         function updateBootstrapPassVisibility() {
             const el = document.getElementById('maker-bootstrap-block');
             if (!el) return;
@@ -6840,7 +7022,7 @@ ${senderUser.name} 様
         pollTimer = setInterval(poll, ms);
       }
 
-      function boot() {
+      function bootAdminExtras() {
         injectAdvisorBoxes();
         injectCallUI();
         fillSanyiSelects();
@@ -6849,7 +7031,7 @@ ${senderUser.name} 様
           setTimeout(function () { fillSanyiSelects(); fillCallSelects(); refreshAdvisorBoxes(); }, 60);
         }, true);
       }
-      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootAdminExtras); else bootAdminExtras();
     })();
     </script>
 
