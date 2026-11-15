@@ -799,6 +799,7 @@
                 <div class="home-calendar-container">
                     <div id="home-calendar-title" class="home-calendar-title"></div>
                     <div id="home-calendar-body"></div>
+                    <p style="font-size:0.75rem; color:#888; margin:8px 0 0;">稽古日をクリックすると、その日の欠席・早退の連絡が表示されます。</p>
                 </div>
 
                 <div id="home-contact-block" class="contact-form-container" style="display:none;">
@@ -929,6 +930,7 @@
 
             <div id="attendance" class="section">
                 <h1>出欠確認</h1>
+                <div class="form-group"><label>稽古日（日付を選択）</label><select id="attend-date" onchange="renderAttendanceBoard()"></select></div>
                 <div class="form-group"><label>部員名</label><select id="attend-name" class="member-select"><option value="">-- 選択してください --</option></select></div>
                 <div class="form-group"><label>区分</label><select id="attend-status" onchange="toggleLeaveTime()"><option value="欠席">欠席</option><option value="早退">早退</option></select></div>
                 <div class="form-group" id="attend-leave-time-group" style="display:none;"><label>早退する時間（必須）</label><input type="time" id="attend-leave-time"></div>
@@ -1006,6 +1008,7 @@
             <div id="schedule" class="section">
                 <h1>スケジュール</h1>
                 <div id="calendar-container"></div>
+                <p style="font-size:0.75rem; color:#888; margin:8px 0 0;">稽古日をクリックすると、その日の欠席・早退の連絡が表示されます。</p>
             </div>
 
             <!-- 大会結果 -->
@@ -4414,14 +4417,95 @@ ${senderUser.name} 様
                 + list.map(r => '・' + r.name + (r.leaveTime ? '　' + r.leaveTime + '〜' : '')).join('<br>');
         }
 
+function attendanceDateKeyOf_(d) {
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+        function attendanceDateLabel_(key) {
+            const d = new Date(String(key) + 'T00:00:00');
+            if (isNaN(d.getTime())) return String(key);
+            return (d.getMonth() + 1) + '/' + d.getDate() + '（' + ['日', '月', '火', '水', '木', '金', '土'][d.getDay()] + '）';
+        }
+        function attendanceDayKind_(key, dayEvents, isHoliday, vacPeriod) {
+            const satEv = (dayEvents || []).find(e => e && e.type === 'saturday');
+            const tourEv = (dayEvents || []).find(e => e && e.type === 'tournament');
+            const workEv = (dayEvents || []).find(e => e && e.type === 'vacation-work');
+            if (satEv) return { kind: 'saturday', title: '土曜活動 ' + (satEv.title || '') };
+            if (tourEv) return { kind: 'tournament', title: '大会・活動 ' + (tourEv.title || '') };
+            if (workEv) return { kind: 'work', title: (workEv.title || '必須活動') };
+            const dow = new Date(String(key) + 'T00:00:00').getDay();
+            const off = (dayEvents || []).some(e => e && (e.type === 'off' || e.type === 'vacation-off'));
+            if ((dow === 2 || dow === 5) && !isHoliday && !off && !vacPeriod) return { kind: 'practice', title: '通常稽古' };
+            return null;
+        }
+        function practiceDaysInRange_(startKey, days) {
+            const events = getScheduleEvents();
+            const out = [];
+            const start = new Date(String(startKey) + 'T00:00:00');
+            for (let i = 0; i < Number(days); i++) {
+                const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+                const key = attendanceDateKeyOf_(d);
+                const dayEvents = events.filter(e => {
+                    if (!e || !e.startDate) return false;
+                    if (e.endDate) return key >= e.startDate && key <= e.endDate;
+                    return e.startDate === key;
+                });
+                const isHoliday = isJapaneseHoliday(d.getFullYear(), d.getMonth() + 1, d.getDate());
+                const vac = vacationOn(key);
+                const info = attendanceDayKind_(key, dayEvents, isHoliday, !!vac);
+                if (info) out.push({ key: key, label: attendanceDateLabel_(key) + info.title });
+            }
+            return out;
+        }
+        function populateAttendanceDateSelect() {
+            const sel = document.getElementById('attend-date');
+            if (!sel) return;
+            const now = new Date();
+            const todayKey = attendanceDateKeyOf_(now);
+            const days = practiceDaysInRange_(todayKey, 90);
+            if (!days.some(d => d.key === todayKey)) {
+                days.unshift({ key: todayKey, label: attendanceDateLabel_(todayKey) + '本日（稽古日以外）' });
+            }
+            const prev = sel.value;
+            sel.innerHTML = days.map(d => `<option value="${escapeHTML(d.key)}">${escapeHTML(d.label)}</option>`).join('');
+            sel.value = (prev && days.some(d => d.key === prev)) ? prev : todayKey;
+        }
+        function attendanceOn(dateKey) {
+            const localeKey = new Date(String(dateKey) + 'T00:00:00').toLocaleDateString();
+            return getSavedAttendance().filter(r => {
+                if (!r) return false;
+                if (r.dateKey) return String(r.dateKey) === String(dateKey);
+                return String(r.date || '').indexOf(localeKey) === 0;
+            });
+        }
+        function openAttendanceForDate(dateKey) {
+            populateAttendanceDateSelect();
+            const sel = document.getElementById('attend-date');
+            if (sel) {
+                if (![...sel.options].some(o => o.value === String(dateKey))) {
+                    const o = document.createElement('option');
+                    o.value = String(dateKey);
+                    o.textContent = attendanceDateLabel_(dateKey) + '通常稽古';
+                    sel.appendChild(o);
+                }
+                sel.value = String(dateKey);
+            }
+            navigateTo('attendance');
+            renderAttendanceBoard();
+            try { renderEarlyLeaveSummary(); attendanceDeadlineNote(); } catch (e) {}
+        }
+        window.openAttendanceForDate = openAttendanceForDate;
+
         // 今日の出欠連絡ボード（全員が閲覧できる）
         function renderAttendanceBoard() {
             const box = document.getElementById('attendance-board');
             if (!box) return;
-            const todayKey = new Date().toLocaleDateString();
-            const list = getSavedAttendance().filter(r => r && String(r.date || '').indexOf(todayKey) === 0);
+            try { populateAttendanceDateSelect(); } catch (e) {}
+            const sel = document.getElementById('attend-date');
+            const dateKey = (sel && sel.value) || attendanceDateKeyOf_(new Date());
+            const list = attendanceOn(dateKey);
+            const dateLabel = attendanceDateLabel_(dateKey);
             if (!list.length) {
-                box.innerHTML = '<div style="border:1px solid #ddd; border-radius:6px; padding:10px; font-size:0.85rem; color:#888;">📋 本日の出欠連絡はまだありません。</div>';
+                box.innerHTML = '<div style="border:1px solid #ddd; border-radius:6px; padding:10px; font-size:0.85rem; color:#888;">📋 ' + escapeHTML(dateLabel) + ' の出欠連絡はまだありません。</div>';
                 return;
             }
             const rows = list.map(r => '<tr>'
@@ -4431,7 +4515,7 @@ ${senderUser.name} 様
                 + '<td style="border-bottom:1px solid #eee; padding:6px; font-size:0.78rem; color:#666;">' + escapeHTML(r.remark || '') + '</td>'
                 + '</tr>').join('');
             box.innerHTML = '<div style="border:1px solid #ddd; border-radius:6px; padding:10px;">'
-                + '<div style="font-weight:bold; font-size:0.9rem; margin-bottom:6px;">📋 本日の出欠連絡（' + list.length + '件）</div>'
+                + '<div style="font-weight:bold; font-size:0.9rem; margin-bottom:6px;">📋 ' + escapeHTML(dateLabel) + ' の出欠連絡（' + list.length + '件）</div>'
                 + '<table style="width:100%; border-collapse:collapse; font-size:0.85rem;">'
                 + '<thead><tr style="background:#f5f5f5;"><th style="text-align:left; padding:6px;">名前</th><th style="text-align:left; padding:6px;">区分</th><th style="text-align:left; padding:6px;">早退時刻</th><th style="text-align:left; padding:6px;">備考</th></tr></thead>'
                 + '<tbody>' + rows + '</tbody></table></div>';
@@ -4444,7 +4528,10 @@ ${senderUser.name} 様
             const timeEl = document.getElementById('attend-leave-time');
             if (!nameEl || !statusEl || !remarkEl) return;
 
-            if (isAttendanceClosed(new Date())) {
+            const dateSel = document.getElementById('attend-date');
+            const dateKey = dateSel && dateSel.value ? String(dateSel.value) : attendanceDateKeyOf_(new Date());
+            if (!dateKey) return alert("稽古日を選択してください。");
+            if (dateKey === attendanceDateKeyOf_(new Date()) && isAttendanceClosed(new Date())) {
                 return alert('本日の出欠連絡は 9:00 で締め切りました。\n以降は顧問または主将へ直接ご連絡ください。');
             }
 
@@ -4462,7 +4549,8 @@ ${senderUser.name} 様
                 status: status,
                 leaveTime: status === '早退' ? leaveTime : '',
                 remark: remark,
-                date: new Date().toLocaleString()
+                date: new Date().toLocaleString(),
+                dateKey: dateKey
             });
             saveSavedAttendance(list);
 
@@ -4818,9 +4906,10 @@ ${senderUser.name} 様
                 });
 
                 const cellStyle = isToday ? 'background-color:#000; color:#fff; font-weight:bold; border-radius:4px;' : '';
+                const attDay = attendanceDayKind_(dateStr, dayEvents, isHoliday, !!vacPeriod);
 
                 tableHtml += `
-                    <td style="padding:4px 2px; border:1px solid #eee; vertical-align:top; height:65px;">
+                    <td style="padding:4px 2px; border:1px solid #eee; vertical-align:top; height:65px;${attDay ? ' cursor:pointer;' : ''}"${attDay ? ` onclick="openAttendanceForDate('${dateStr}')" title="クリックでこの日の出欠連絡を表示"` : ''}>
                         <div style="${cellStyle}">${day}</div>
                         ${tagsHtml}
                     </td>
