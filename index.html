@@ -488,6 +488,15 @@
                 <div id="audit-log-list" style="margin-top:10px;"></div>
             </div>
 
+            <div class="dev-section" style="border-color:#d9534f; background:#fff5f5;">
+                <h3 style="color:#d9534f;">⚠️ 公式警告を個人に送る（作成者専用）</h3>
+                <p style="font-size:0.78rem; color:#555;">選択した部員へ公式アカウントから警告DMを送り、DM警告カウントに1件記録します（半年間に3回で個人DM・グループDMが1週間停止、5回で入力制限）。</p>
+                <div class="form-group"><label>警告する相手</label><select id="dev-warn-user-select"></select></div>
+                <div class="form-group"><label>警告の理由・内容</label><textarea id="dev-warn-reason" rows="3" placeholder="例: DMでの発言が不適切でした。今後は丁寧な言葉づかいを心がけてください。"></textarea></div>
+                <button type="button" class="btn-primary" style="background:#d9534f; width:100%;" onclick="sendOfficialWarningByMaker()">⚠️ 公式警告を送信する</button>
+                <div id="dev-warn-result" style="margin-top:8px; font-size:0.8rem; color:#555;"></div>
+            </div>
+
             <div class="dev-section" style="border-color:#ff9800; background:#fffaf2;">
                 <h3 style="color:#e67e22;">📥 名簿CSV一括登録</h3>
                 <p style="font-size:0.78rem; color:#555;">1行＝1人。<strong>名前,学年,入学年度,区分</strong> の順（例: <code>山田太郎,1,2026,部員</code>）。入学年度が空欄なら学年から自動計算、区分は「部員」または「顧問」（顧問は最大2名）。</p>
@@ -3526,6 +3535,26 @@ ${userName} 様
             } finally { guestRosterLoading = false; }
         }
 
+        let guestResultsLoading = false;
+        let guestResultsLoaded = false;
+        async function loadPublicResultsForGuest(force) {
+            if (currentUser || guestResultsLoading || (guestResultsLoaded && !force)) return;
+            if (!gasAvailable()) return;
+            guestResultsLoading = true;
+            try {
+                const res = await gasRun('apiPublicResults');
+                if (!res || !res.ok) throw new Error('結果データを取得できませんでした');
+                if (Array.isArray(res.tournaments)) saveTournaments(res.tournaments);
+                if (Array.isArray(res.exams)) saveExams(res.exams);
+                guestResultsLoaded = true;
+                try { renderTournamentHistory(); } catch (e) {}
+                try { renderExamHistory(); } catch (e) {}
+            } catch (e) {
+                console.error('ゲスト結果取得エラー:', e);
+            } finally { guestResultsLoading = false; }
+        }
+        window.loadPublicResultsForGuest = loadPublicResultsForGuest;
+
         function submitClassReselect() {
             const sel = document.getElementById('acc-reselect-class');
             if (!sel || !currentUser) return;
@@ -4730,6 +4759,51 @@ function attendanceDateKeyOf_(d) {
         }
         window.renderDmWarningStatus = renderDmWarningStatus;
 
+        function populateDevWarnUserSelect() {
+            const sel = document.getElementById('dev-warn-user-select');
+            if (!sel) return;
+            VALID_ACCOUNTS = getSavedAccounts();
+            let html = '<option value="">-- 相手を選択 --</option>';
+            VALID_ACCOUNTS.forEach(a => {
+                if (!a || isRetiredAccount(a)) return;
+                if (currentUser && String(a.id) === String(currentUser.id)) return;
+                html += `<option value="${escapeHTML(a.id)}">${escapeHTML(a.name)}（${escapeHTML(a.isAdvisor ? '顧問' : (a.role || '一般'))}）</option>`;
+            });
+            sel.innerHTML = html;
+        }
+        window.populateDevWarnUserSelect = populateDevWarnUserSelect;
+
+        function sendOfficialWarningByMaker() {
+            if (!currentUser || !(currentUser.isMaker || currentUser.role === '作成者')) return alert('作成者のみ実行できます。');
+            const sel = document.getElementById('dev-warn-user-select');
+            const reasonEl = document.getElementById('dev-warn-reason');
+            const resultEl = document.getElementById('dev-warn-result');
+            if (!sel || !reasonEl) return;
+            const targetId = String(sel.value || '');
+            const reason = reasonEl.value.trim();
+            if (!targetId) return alert('警告する相手を選択してください。');
+            if (!reason) return alert('警告の理由・内容を入力してください。');
+            const target = getSavedAccounts().find(a => String(a.id) === targetId);
+            recordDmWarning(targetId, '公式警告', reason);
+            const msgs = getSavedMessages();
+            msgs.unshift({
+                senderId: 'official',
+                senderName: '【公式】筑附中学剣道部',
+                receiverId: targetId,
+                content: '⚠️ 運営から公式警告が送られました。\n理由: ' + reason + '\n（半年間に3回の警告で個人DM・グループDMが1週間停止、5回で入力が制限されます。）',
+                date: new Date().toLocaleString(),
+                isOfficial: true
+            });
+            saveSavedMessages(msgs);
+            reasonEl.value = '';
+            if (resultEl) resultEl.innerHTML = '⚠️ ' + escapeHTML((target && target.name) || targetId) + ' に公式警告を送信しました（半年間の警告回数: ' + dmWarningCount(targetId) + '回）';
+            try { renderDMUI(); } catch (e) {}
+            try { renderHomeNotices(); } catch (e) {}
+            try { applyDmSanctions(); } catch (e) {}
+            alert('⚠️ 公式警告を送信しました。');
+        }
+        window.sendOfficialWarningByMaker = sendOfficialWarningByMaker;
+
         function renderHomeNotices() {
             const container = document.getElementById('home-notices-list');
             if (!container) return;
@@ -5068,6 +5142,7 @@ function attendanceDateKeyOf_(d) {
             }
 
             window.scrollTo(0, 0);
+            if (!currentUser && (id === 'tournament' || id === 'exam')) { try { loadPublicResultsForGuest(false); } catch (e) {} }
         }
 
         function openSecondaryAuthModal(target) {
@@ -5700,6 +5775,7 @@ function attendanceDateKeyOf_(d) {
                 navigateTo('accounting');
             } else if (type === 'maker-dev') {
                 populateSanyiSelects();
+                populateDevWarnUserSelect();
                 renderDevUserInfoList();
                 renderDevToolData();
                 renderDevManualManager();
@@ -5806,7 +5882,7 @@ function attendanceDateKeyOf_(d) {
 
             const sanyi = getSanyiData();
             const isMakerUser = currentUser && (currentUser.isMaker || currentUser.role === '作成者');
-            const isCurrentSanyi = isMakerUser || (currentUser && (currentUser.id === sanyi.captainId || currentUser.id === sanyi.vice1Id || currentUser.id === sanyi.vice2Id));
+            const isCurrentSanyi = currentUser && (currentUser.id === sanyi.captainId || currentUser.id === sanyi.vice1Id || currentUser.id === sanyi.vice2Id);
             if (sanyiBox) sanyiBox.style.display = isCurrentSanyi ? 'block' : 'none';
 
             if (historyContainer && currentUser) {
@@ -6138,6 +6214,7 @@ function attendanceDateKeyOf_(d) {
             renderHomeNotices();
             renderRosterList();
             if (!currentUser) loadPublicRosterForGuest(false);
+            if (!currentUser) loadPublicResultsForGuest(false);
             renderToinkaiDocs();
             renderYearlyPlanPreview();
             updateExamMemberDropdown();
@@ -6974,24 +7051,44 @@ function attendanceDateKeyOf_(d) {
 
       function injectCallUI() {
         const dm = $('dm');
-        if (!dm || $('call-panel')) return;
-        const panel = document.createElement('div');
-        panel.className = 'form-block'; panel.id = 'call-panel';
-        panel.innerHTML = '<h3 style="color:#00796b;">📞 音声通話（個人・グループDM）</h3>'
-          + '<p style="font-size:0.78rem; color:#666; margin:4px 0 8px;">三役専用グループDMは通話の対象外です。マイクの使用を許可してください。</p>'
-          + '<div class="form-group"><label>通話相手（個人）</label><select id="call-user-select"><option value="">-- 相手を選択 --</option></select></div>'
-          + '<div class="form-group"><label>またはグループDM</label><select id="call-group-select"><option value="">-- グループを選択 --</option></select></div>'
-          + '<button class="submit-btn" style="background:#00796b;" onclick="startVoiceCall()">音声通話を開始</button>';
-        const anchor = $('dm-received-history') || null;
-        // anchor が dm の直下とは限らないため、必ず同じ親要素の直前に挿入する。
-        // dm.insertBefore(panel, anchor) だと anchor が子孫要素の場合 NotFoundError になる。
+        if (!dm || $('call-start-bar')) return;
+        const bar = document.createElement('div');
+        bar.className = 'form-block'; bar.id = 'call-start-bar';
+        bar.style.cssText = 'margin-bottom:12px;';
+        bar.innerHTML = '<button class="submit-btn" style="background:#00796b; width:100%; font-size:1.05rem; padding:14px;" onclick="openCallTargetModal()">📞 通話を発信する</button>';
+        const wrap = $('dm-talk-wrap');
+        let anchor = wrap;
+        if (wrap && wrap.previousElementSibling && wrap.previousElementSibling.tagName === 'H2') anchor = wrap.previousElementSibling;
         if (anchor && anchor.parentNode) {
-          anchor.parentNode.insertBefore(panel, anchor);
+          anchor.parentNode.insertBefore(bar, anchor);
+        } else if (wrap && wrap.parentNode) {
+          wrap.parentNode.insertBefore(bar, wrap);
         } else {
-          dm.appendChild(panel);
+          dm.appendChild(bar);
+        }
+        if (!$('call-target-modal')) {
+          const modal = document.createElement('div');
+          modal.id = 'call-target-modal';
+          modal.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center;';
+          modal.innerHTML = '<div style="background:#fff; border-radius:14px; padding:20px; width:min(92vw,360px); box-shadow:0 12px 40px rgba(0,0,0,0.3);">'
+            + '<h3 style="margin:0 0 6px; color:#00796b;">📞 通話相手を選択</h3>'
+            + '<p style="font-size:0.78rem; color:#666; margin:4px 0 10px;">三役専用グループDMは通話の対象外です。マイクの使用を許可してください。</p>'
+            + '<div class="form-group"><label>通話相手（個人）</label><select id="call-user-select"><option value="">-- 相手を選択 --</option></select></div>'
+            + '<div class="form-group"><label>またはグループDM</label><select id="call-group-select"><option value="">-- グループを選択 --</option></select></div>'
+            + '<button class="submit-btn" style="background:#00796b;" onclick="startVoiceCall()">音声通話を開始</button>'
+            + '<button type="button" class="login-header-btn" style="margin-top:8px;" onclick="closeCallTargetModal()">キャンセル</button>'
+            + '</div>';
+          document.body.appendChild(modal);
         }
         fillCallSelects();
       }
+      window.openCallTargetModal = function () {
+        const m = $('call-target-modal');
+        if (!m) return;
+        fillCallSelects();
+        m.style.display = 'flex';
+      };
+      window.closeCallTargetModal = function () { const m = $('call-target-modal'); if (m) m.style.display = 'none'; };
       function fillCallSelects() {
         const u = $('call-user-select'), gsel = $('call-group-select');
         if (!u || !gsel) return;
@@ -7001,7 +7098,7 @@ function attendanceDateKeyOf_(d) {
             '<option value="' + String(a.id) + '">' + String(a.name || a.id) + '</option>').join('');
         }
         if (gsel.options.length <= 1) {
-          const groups = (typeof getGroupDMs === 'function' ? getGroupDMs() : []);
+          const groups = getSavedGroupDMs();
           const ok = groups.filter(g => g && !g.isSanyi && !g.sanyi && String(g.id || '').indexOf('sanyi') !== 0);
           gsel.innerHTML = '<option value="">-- グループを選択 --</option>' + ok.map(g =>
             '<option value="' + String(g.id) + '">' + String(g.name || 'グループ') + '</option>').join('');
@@ -7179,9 +7276,10 @@ function attendanceDateKeyOf_(d) {
         if (!gasToken() || typeof currentUser === 'undefined' || !currentUser) return alert('ログインしてください。');
         const uid = $('call-user-select').value;
         const gid = $('call-group-select').value;
+        try { closeCallTargetModal(); } catch (e) {}
         let targets = [], label = '';
         if (gid) {
-          const g = (typeof getGroupDMs === 'function' ? getGroupDMs() : []).find(x => String(x.id) === String(gid));
+          const g = getSavedGroupDMs().find(x => String(x.id) === String(gid));
           if (!g) return alert('グループが見つかりません。');
           if (g.isSanyi || g.sanyi || String(g.id).indexOf('sanyi') === 0) return alert('三役専用グループDMは通話の対象外です。');
           targets = (g.members || g.memberIds || []).map(String).filter(id => id !== myId());

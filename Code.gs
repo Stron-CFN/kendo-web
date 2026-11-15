@@ -730,6 +730,17 @@ function apiPublicMembers() {
   return { ok: true, members: members };
 }
 
+/** ゲストでも閲覧できる大会結果・審査結果（成績の公開データのみ） */
+function apiPublicResults() {
+  const tournaments = readData_('system_tournaments', []);
+  const exams = readData_('system_exams', []);
+  return {
+    ok: true,
+    tournaments: Array.isArray(tournaments) ? tournaments : [],
+    exams: Array.isArray(exams) ? exams : []
+  };
+}
+
 /** 三役の3名を検証して名簿ごと返す */
 function sanyiIds_(captainId, vice1Id, vice2Id) {
   const ids = [String(captainId || '').trim(), String(vice1Id || '').trim(), String(vice2Id || '').trim()];
