@@ -2229,7 +2229,10 @@
             if (!container) return;
 
             VALID_ACCOUNTS = getSavedAccounts();
-            const members = VALID_ACCOUNTS.filter(a => !a.isAdvisor && a.grade !== '卒業');
+            const members = VALID_ACCOUNTS.filter(a => !a.isAdvisor && a.grade !== '卒業' && !isRetiredAccount(a))
+                .sort((x, y) => gradeNumber_(y.grade) - gradeNumber_(x.grade)
+                    || String(x.class || '').localeCompare(String(y.class || ''), 'ja')
+                    || String(x.name || '').localeCompare(String(y.name || ''), 'ja'));
             const attendanceRecords = getSavedAttendance();
 
             if (members.length === 0) {
@@ -3444,7 +3447,13 @@ ${userName} 様
                     <tbody>
             `;
 
-            VALID_ACCOUNTS.filter(m => m.grade !== '卒業' && !m.isTreasurer).forEach(a => {
+            VALID_ACCOUNTS.filter(m => m.grade !== '卒業' && !m.isTreasurer && !isRetiredAccount(m))
+                .slice()
+                .sort((x, y) => (y.isAdvisor ? 1 : 0) - (x.isAdvisor ? 1 : 0)
+                    || gradeNumber_(y.grade) - gradeNumber_(x.grade)
+                    || String(x.class || '').localeCompare(String(y.class || ''), 'ja')
+                    || String(x.name || '').localeCompare(String(y.name || ''), 'ja'))
+                .forEach(a => {
                 const gradeStr = a.isAdvisor ? '指導者' : (a.grade ? (a.grade === '卒業' ? '卒業生' : `${a.grade}年`) : '-');
                 const classStr = a.isAdvisor ? '-' : (a.class || '<span style="color:red;">未設定</span>');
                 html += `
