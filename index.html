@@ -25,6 +25,11 @@
         .sync-btn, .login-header-btn, .menu-item-btn, .admin-btn { background: #000; color: #fff; border: 1px solid #000; padding: 8px; font-weight: bold; font-size: 0.85rem; cursor: pointer; text-align: center; border-radius: 4px; width: 100%; }
         .sync-btn:active, .login-header-btn:active { background: #333; }
         /* ===== DM トーク（LINE風 2ペイン） ===== */
+        #custom-group-suggestions { border:1px solid #ccc; border-radius:6px; background:#fff; max-height:180px; overflow-y:auto; margin-top:4px; }
+        .cg-suggest-item { padding:8px 10px; cursor:pointer; font-size:0.9rem; }
+        .cg-suggest-item:hover { background:#f3e5f5; }
+        .cg-chip { display:inline-flex; align-items:center; gap:6px; background:#f3e5f5; border:1px solid #ce93d8; color:#4a148c; border-radius:14px; padding:3px 10px; margin:3px 4px 0 0; font-size:0.85rem; }
+        .cg-chip button { background:none; border:none; color:#8e24aa; cursor:pointer; font-weight:bold; padding:0 2px; }
         #dm-talk-wrap { display: flex; gap: 10px; align-items: flex-start; }
         #dm-channel-list { flex: 0 0 34%; min-width: 170px; max-width: 340px; }
         #dm-thread-pane { flex: 1 1 auto; min-width: 0; }
@@ -851,8 +856,10 @@
                             <input type="text" id="custom-group-name" placeholder="例: 1年部員グループ / 企画係">
                         </div>
                         <div class="form-group">
-                            <label>参加メンバーを選択</label>
-                            <div id="custom-group-members-list" class="member-checkbox-list"></div>
+                            <label>参加メンバーを追加（名前を入力して選択）</label>
+                            <input type="text" id="custom-group-search" placeholder="例: 大澤" autocomplete="off" oninput="filterCustomGroupSuggestions()" onfocus="filterCustomGroupSuggestions()">
+                            <div id="custom-group-suggestions" style="display:none;"></div>
+                            <div id="custom-group-selected" style="margin-top:6px;"></div>
                         </div>
                         <button class="submit-btn" style="background:#9c27b0;" onclick="createCustomGroupDM()">グループDMを開設する</button>
                     </div>
@@ -3713,8 +3720,8 @@ ${senderUser.name} 様
             const groupName = nameEl.value.trim();
             if (!groupName) return alert("グループ名を入力してください。");
 
-            const checkedBoxes = document.querySelectorAll('.custom-group-member-cb:checked');
-            const selectedMemberIds = Array.from(checkedBoxes).map(cb => cb.value);
+            const selectedMemberIds = (window.__customGroupSelectedIds || []).map(String);
+            window.__customGroupSelectedIds = [];
 
             if (currentUser && !selectedMemberIds.includes(currentUser.id)) {
                 selectedMemberIds.push(currentUser.id);
@@ -3738,22 +3745,70 @@ ${senderUser.name} 様
             renderDMUI();
         }
 
+        window.__customGroupSelectedIds = window.__customGroupSelectedIds || [];
         function renderCustomGroupMemberList() {
-            const container = document.getElementById('custom-group-members-list');
-            if (!container) return;
+            const selEl = document.getElementById('custom-group-selected');
+            if (!selEl) return;
             VALID_ACCOUNTS = getSavedAccounts();
-
-            let html = "";
-            VALID_ACCOUNTS.forEach(a => {
-                if (currentUser && a.id === currentUser.id) return;
-                html += `
-                    <label>
-                        <input type="checkbox" class="custom-group-member-cb" value="${escapeHTML(a.id)}"> ${escapeHTML(a.name)} (${a.isAdvisor ? '顧問' : '部員'})
-                    </label>
-                `;
-            });
-            container.innerHTML = html || '<p style="font-size:0.8rem; color:#888;">選択可能なメンバーがいません。</p>';
+            const ids = (window.__customGroupSelectedIds || []).map(String);
+            if (!ids.length) {
+                selEl.innerHTML = '<p style="font-size:0.8rem; color:#888; margin:2px 0;">まだ追加されていません。上の欄に名前を入力して候補から選んでください。</p>';
+                return;
+            }
+            selEl.innerHTML = ids.map(id => {
+                const a = VALID_ACCOUNTS.find(x => String(x.id) === id);
+                const label = a ? `${a.name} (${a.isAdvisor ? '顧問' : '部員'})` : 'ID:' + id;
+                return `<span class="cg-chip">${escapeHTML(label)}<button type="button" onclick="removeCustomGroupMember('${escapeHTML(id)}')" aria-label="削除">×</button></span>`;
+            }).join('');
         }
+
+        function filterCustomGroupSuggestions() {
+            const input = document.getElementById('custom-group-search');
+            const box = document.getElementById('custom-group-suggestions');
+            if (!input || !box) return;
+            VALID_ACCOUNTS = getSavedAccounts();
+            const q = String(input.value || '').replace(/\s+/g, '').toLowerCase();
+            const ids = (window.__customGroupSelectedIds || []).map(String);
+            const candidates = VALID_ACCOUNTS.filter(a => {
+                if (!a || currentUser && String(a.id) === String(currentUser.id)) return false;
+                if (isRetiredAccount(a)) return false;
+                if (ids.indexOf(String(a.id)) >= 0) return false;
+                if (!q) return true;
+                const name = String(a.name || '').replace(/\s+/g, '').toLowerCase();
+                return name.indexOf(q) >= 0;
+            }).slice(0, 8);
+            if (!candidates.length) {
+                box.innerHTML = '<div class="cg-suggest-item" style="color:#888; cursor:default;">候補がありません</div>';
+            } else {
+                box.innerHTML = candidates.map(a => `<div class="cg-suggest-item" onmousedown="addCustomGroupMember('${escapeHTML(a.id)}')">${escapeHTML(a.name)} (${a.isAdvisor ? '顧問' : '部員'} / ID:${escapeHTML(a.id)})</div>`).join('');
+            }
+            box.style.display = 'block';
+        }
+
+        function addCustomGroupMember(id) {
+            id = String(id || '');
+            const input = document.getElementById('custom-group-search');
+            const box = document.getElementById('custom-group-suggestions');
+            window.__customGroupSelectedIds = window.__customGroupSelectedIds || [];
+            if (id && window.__customGroupSelectedIds.map(String).indexOf(id) < 0) {
+                window.__customGroupSelectedIds.push(id);
+            }
+            if (input) input.value = '';
+            if (box) box.style.display = 'none';
+            renderCustomGroupMemberList();
+        }
+
+        function removeCustomGroupMember(id) {
+            window.__customGroupSelectedIds = (window.__customGroupSelectedIds || []).map(String).filter(x => x !== String(id));
+            renderCustomGroupMemberList();
+        }
+
+        document.addEventListener('click', function (e) {
+            const box = document.getElementById('custom-group-suggestions');
+            const input = document.getElementById('custom-group-search');
+            if (!box || !input) return;
+            if (!box.contains(e.target) && e.target !== input) box.style.display = 'none';
+        });
 
         async function uploadYearlyPlanByAdvisor() {
             const fileEl = document.getElementById('dev-adv-yearly-plan-file') || document.getElementById('adv-yearly-plan-file');
