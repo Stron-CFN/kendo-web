@@ -989,7 +989,7 @@
                     <h3>⚔️ 稽古日誌の追加</h3>
                     <div class="form-group"><label>日付</label><input type="date" id="practice-date"></div>
                     <div class="form-group">
-                        <label>👥 本日来た部員の選択 (連絡ありは自動表示)</label>
+                        <label>👥 本日来た部員を選択（ドロップダウン・連絡ありは自動表示）</label>
                         <div id="practice-attendance-checklist" class="member-checkbox-list"></div>
                     </div>
 
@@ -2237,26 +2237,54 @@
 
             if (members.length === 0) {
                 container.innerHTML = '<p style="font-size:0.8rem; color:#888;">登録されている部員がいません。</p>';
+                window.__practiceAttendIds = null;
                 return;
             }
 
-            let html = '';
-            members.forEach(m => {
-                const todayKey = new Date().toDateString();
-                const hasNotice = attendanceRecords.some(att =>
+            const todayKey = new Date().toDateString();
+            const hasNotice = id => {
+                const m = members.find(x => String(x.id) === String(id));
+                return !!m && attendanceRecords.some(att =>
                     att.name === m.name && new Date(att.date).toDateString() === todayKey);
-                const noticeLabel = hasNotice ? '<span style="color:#d9534f; font-weight:bold; margin-left:6px;">[連絡あり]</span>' : '';
-                const checkedAttr = hasNotice ? '' : 'checked';
+            };
 
-                html += `
-                    <label style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:0.85rem;">
-                        <input type="checkbox" class="practice-attend-cb" value="${escapeHTML(m.name)}" ${checkedAttr}>
-                        <span>${escapeHTML(m.name)} (${escapeHTML(m.grade ? m.grade + '年' : '')}) ${noticeLabel}${isThirdGrade_(m.grade) ? '<span style="color:#0d47a1; font-size:0.75rem; margin-left:6px;">[夏以降 自由参加]</span>' : ''}</span>
-                    </label>
-                `;
-            });
+            if (!Array.isArray(window.__practiceAttendIds)) {
+                window.__practiceAttendIds = members.filter(m => !hasNotice(m.id)).map(m => String(m.id));
+            }
+            window.__practiceAttendIds = window.__practiceAttendIds.map(String).filter(id => members.some(m => String(m.id) === id));
 
-            container.innerHTML = html;
+            const candidates = members.filter(m => window.__practiceAttendIds.indexOf(String(m.id)) < 0);
+            const chipHtml = window.__practiceAttendIds.map(id => {
+                const m = members.find(x => String(x.id) === String(id));
+                if (!m) return '';
+                const noticeLabel = hasNotice(id) ? '<span style="color:#d9534f; font-weight:bold;">[連絡あり]</span>' : '';
+                return `<span class="cg-chip">${escapeHTML(m.name)} (${escapeHTML(m.grade ? m.grade + '年' : '')})${noticeLabel}<button type="button" onclick="removePracticeAttend('${escapeHTML(String(id))}')" aria-label="削除">×</button></span>`;
+            }).join('');
+
+            container.innerHTML = '<select id="practice-attend-select" onchange="addPracticeAttendFromSelect()"></select>'
+                + '<div style="margin-top:6px;">' + (chipHtml || '<p style="font-size:0.8rem; color:#888; margin:2px 0;">まだ誰も選択されていません。上のドロップダウンから追加してください。</p>') + '</div>';
+
+            const sel = document.getElementById('practice-attend-select');
+            sel.innerHTML = '<option value="">メンバーを選択…</option>'
+                + candidates.map(m => `<option value="${escapeHTML(String(m.id))}">${escapeHTML(m.name)} (${escapeHTML(m.grade ? m.grade + '年' : '')})${hasNotice(String(m.id)) ? ' [連絡あり]' : ''}</option>`).join('');
+        }
+
+        function addPracticeAttendFromSelect() {
+            const sel = document.getElementById('practice-attend-select');
+            if (!sel || !sel.value) return;
+            addPracticeAttend(sel.value);
+        }
+
+        function addPracticeAttend(id) {
+            id = String(id || '');
+            if (!Array.isArray(window.__practiceAttendIds)) window.__practiceAttendIds = [];
+            if (id && window.__practiceAttendIds.indexOf(id) < 0) window.__practiceAttendIds.push(id);
+            renderPracticeAttendanceChecklist();
+        }
+
+        function removePracticeAttend(id) {
+            window.__practiceAttendIds = (window.__practiceAttendIds || []).map(String).filter(x => x !== String(id));
+            renderPracticeAttendanceChecklist();
         }
 
         function savePractice() {
@@ -2266,10 +2294,12 @@
             const date = dateEl.value;
             if (!date) return alert("日付を入力してください。");
 
-            const checkedBoxes = document.querySelectorAll('.practice-attend-cb:checked');
-            const attendedMembers = Array.from(checkedBoxes).map(cb => cb.value);
-
             VALID_ACCOUNTS = getSavedAccounts();
+            const attendedMembers = (window.__practiceAttendIds || []).map(id => {
+                const a = VALID_ACCOUNTS.find(x => String(x.id) === String(id));
+                return a ? String(a.name || '') : '';
+            }).filter(Boolean);
+            window.__practiceAttendIds = null;
             const vacNow = vacationOn(date);
             if (vacNow && !(currentUser && (currentUser.isAdvisor || currentUser.isMaker))) {
                 return alert('長期休み（' + vacNow.label + '）中の稽古は顧問が登録します。');
