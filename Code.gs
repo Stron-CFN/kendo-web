@@ -40,7 +40,8 @@ const SECONDARY_PASS_DEFAULTS = {
   captain_upload: 'ombra.583',
   maker_delete_doc: 'Rivista.760',
   maker_passcode: 'Primo.37890',
-  advisor_dm_broadcast: 'atmosferico.279'
+  advisor_dm_broadcast: 'atmosferico.279',
+  vice_broadcast: 'anonimo.4703'
 };
 const SECONDARY_PASS_PREFIX = 'SEC_PASS_';
 
@@ -139,6 +140,8 @@ function setupClubSystem(setupSecret) {
   // 5) 年次トリガー（失敗してもセットアップ自体は成功扱い）
   try { installAnnualAdvisorResetTrigger(); }
   catch (e) { result.trigger = 'failed: ' + e; result.warnings.push('年次トリガー作成に失敗しました（後で単体実行してください）'); }
+  try { installMonthlyAttendanceReportTrigger(); }
+  catch (e) { result.warnings.push('月次出席率レポートのトリガー作成に失敗しました（後で installMonthlyAttendanceReportTrigger を単体実行してください）'); }
 
   // 6) スクリプトプロパティの既定値（保護パスワード等）を投入
   try { ensureSecondaryPassDefaults_(); } catch (e) { result.warnings.push('保護パスワード初期化スキップ: ' + e); }
@@ -715,22 +718,18 @@ function apiAttachmentUrl(fileId, token) {
 function apiPublicMembers() {
   const accounts = readData_('system_accounts', []);
   const members = accounts.filter(function (a) {
-    return a && String(a.status || 'active') === 'active' && String(a.grade || '') !== '卒業';
+    return a && !a.isAdvisor && String(a.grade || '') !== '卒業';
   }).map(function (a) {
-    // ゲスト向けは名簿表示に必要な情報だけ公開（パスワード・連絡先等は返さない）。
+    // クラスはログインなしでも表示できるよう公開する（パスワード等は返さない）
     return {
-      id: String(a.id || ''),
-      name: String(a.name || ''),
-      grade: String(a.isAdvisor ? '顧問' : (a.grade || '')) ,
-      class: String(a.class || ''),
-      role: String(a.role || (a.isAdvisor ? '顧問' : '一般')),
-      isAdvisor: !!a.isAdvisor
+      id: String(a.id), name: String(a.name || ''), grade: String(a.grade || ''),
+      class: String(a.class || ''), role: String(a.role || '一般'), isAdvisor: !!a.isAdvisor
     };
   });
   return { ok: true, members: members };
 }
 
-/** ゲストでも閲覧できる大会結果・審査結果（成績の公開データのみ） */
+/** ゲスト向け公開結果（閲覧のみ）。 */
 function apiPublicResults() {
   const tournaments = readData_('system_tournaments', []);
   const exams = readData_('system_exams', []);
@@ -942,7 +941,8 @@ function apiSaveData(key, jsonValue, token, baseRev) {
     system_advisor_reset_year: isMaker,
     system_accounting_docs: isMaker || !!session.isTreasurer || session.isAdvisor || isAdminToolUnlocked_('accounting', session.id),
     system_accounting_state: isMaker || !!session.isTreasurer || isAdminToolUnlocked_('accounting', session.id),
-    system_attendance_alert_state: isMaker || session.isAdvisor || session.isCaptain
+    system_attendance_alert_state: isMaker || session.isAdvisor || session.isCaptain,
+    system_monthly_reports: isMaker
   };
   if (Object.prototype.hasOwnProperty.call(permissionMap, key) && !permissionMap[key]) {
     throw new Error('このデータを変更する権限がありません。');
@@ -1508,15 +1508,38 @@ function dataForSession_(session) {
     }
   }
 
+  // 三役専用グループDMは、サーバー側でも三役以外（作成者を含む）に配信しない
+  let protectedGroupIds = [];
+  try {
+    const sanyi = readData_('system_sanyi_data', {}) || {};
+    const isSanyiMember = [sanyi.captainId, sanyi.vice1Id, sanyi.vice2Id]
+      .some(v => String(v || '') === String(session && session.id));
+    if (!isSanyiMember && data.system_group_dms) {
+      try {
+        const groups = JSON.parse(data.system_group_dms);
+        if (Array.isArray(groups)) {
+          const isSanyiGroup = function (g) {
+            return g && (String(g.id || '').indexOf('sanyi') === 0
+              || String(g.name || '').indexOf('三役') >= 0
+              || g.isSanyi === true || g.sanyi === true);
+          };
+          protectedGroupIds = groups.filter(isSanyiGroup).map(function (g) { return String(g.id || ''); });
+          data.system_group_dms = JSON.stringify(groups.filter(function (g) { return !isSanyiGroup(g); }));
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+
   if (!session || session.isMaker) return data;
 
   if (data.system_messages) {
     try {
       const messages = JSON.parse(data.system_messages);
       data.system_messages = JSON.stringify(messages.filter(m =>
-        String(m.receiverId) === String(session.id) ||
+        protectedGroupIds.indexOf(String(m.receiverId)) < 0 &&
+        (String(m.receiverId) === String(session.id) ||
         String(m.senderId) === String(session.id) ||
-        String(m.receiverId) === 'ALL'
+        String(m.receiverId) === 'ALL')
       ));
     } catch (e) {}
   }
@@ -2107,7 +2130,8 @@ const ADMIN_TOOL_CREDENTIALS = {
   accounting: { id: 'Contabilità/director@13456', pass: 'bilancio@12456' },
   captain:    { id: 'director/capitano@456',      pass: 'pass.24680' },
   advisor:    { id: 'director/consulente@123',    pass: 'pass.13579' },
-  maker:      { id: 'Maker/Creatore@789',         pass: 'pass.124578' }
+  maker:      { id: 'Maker/Creatore@789',         pass: 'pass.124578' },
+  vice:       { id: 'Lavoro/director@43021',      pass: 'Pass@7431' }
 };
 
 function adminToolCredential_(tool) {
@@ -2410,4 +2434,339 @@ function notifyAdvisors(body, title) {
   } catch (e) {
     return { ok: false, error: String(e) };
   }
+}
+
+
+/* ============================================================
+ * 運営（作成者）から個人への個別連絡
+ *  - 画面ではなくサーバー側で「作成者セッション」を検証する
+ *  - 送信は公式（運営）名義のメッセージとして保存する
+ * ============================================================ */
+function pushClubMessage_(receiverId, content, senderId, senderName, extra) {
+  const raw = readData_('system_messages', []);
+  const list = Array.isArray(raw) ? raw.slice() : [];
+  list.unshift(Object.assign({
+    id: 'msg_' + Utilities.getUuid(),
+    senderId: String(senderId || 'official'),
+    senderName: String(senderName || '🏫 運営'),
+    receiverId: String(receiverId || ''),
+    content: String(content || ''),
+    date: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd H:mm:ss'),
+    isOfficial: true
+  }, extra || {}));
+  writeData_('system_messages', list.slice(0, 600));
+  bumpRev_('system_messages');
+  return true;
+}
+
+/** 運営（＝作成者）から特定の部員・顧問へ個別連絡 */
+function apiCreatorSendToMember(token, targetId, content) {
+  const session = requireSession_(token);
+  if (!session) return { ok: false, message: 'ログイン期限が切れました。再ログインしてください。' };
+  if (!session.isMaker) return { ok: false, message: 'この機能は作成者のみ利用できます。' };
+  const target = String(targetId || '').trim();
+  const text = String(content || '').trim();
+  if (!target) return { ok: false, message: '送信先を選択してください。' };
+  if (!text) return { ok: false, message: '連絡内容を入力してください。' };
+  if (text.length > 4000) return { ok: false, message: '本文が長すぎます（4000文字以内）。' };
+  const accounts = readData_('system_accounts', []);
+  const acc = (Array.isArray(accounts) ? accounts : []).filter(function (a) { return a && String(a.id) === target; })[0];
+  if (!acc) return { ok: false, message: '送信先が見つかりません。' };
+  pushClubMessage_(target, text, 'official', '🏫 運営（作成者）', { fromMaker: true });
+  try { appendAudit_(session.id, '運営から個別連絡', target, String(acc.name || '')); } catch (e) {}
+  return { ok: true, message: String(acc.name || '') + ' さんへ運営から連絡を送信しました。' };
+}
+
+/* ============================================================
+ * 月次出席率レポート（PDF）
+ *  - 3年生は夏休み（7/10）以降を集計から除外
+ *  - 事前連絡のある欠席は欠席扱いにせず分母からも除外
+ * ============================================================ */
+const SUMMER_FREE_FROM_MONTH = 7;
+const SUMMER_FREE_FROM_DAY = 10;
+
+function isAfterSummerStartServer_(dateStr) {
+  const s = String(dateStr || '');
+  const m = Number(s.slice(5, 7)), d = Number(s.slice(8, 10));
+  if (!m) return false;
+  return (m === SUMMER_FREE_FROM_MONTH && d >= SUMMER_FREE_FROM_DAY) || m > SUMMER_FREE_FROM_MONTH || m <= 3;
+}
+function gradeNumberServer_(g) {
+  const m = String(g == null ? '' : g).match(/[0-9]+/);
+  return m ? parseInt(m[0], 10) : 0;
+}
+function escHtmlServer_(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function monthKeyOf_(y, m) {
+  return String(y) + '-' + ('0' + Number(m)).slice(-2);
+}
+
+/** 指定月の出席率を集計する（分母＝稽古回数−事前連絡欠席） */
+function computeAttendanceReport_(year, month) {
+  const accounts = (readData_('system_accounts', []) || []).filter(function (a) {
+    return a && !a.isAdvisor && String(a.grade || '') !== '卒業' && String(a.status || 'active') !== 'retired';
+  });
+  const practicesRaw = readData_('system_practices', []);
+  const noticesRaw = readData_('system_attendance', []);
+  const practices = (Array.isArray(practicesRaw) ? practicesRaw : []).filter(function (p) { return p && p.date; });
+  const notices = Array.isArray(noticesRaw) ? noticesRaw : [];
+  const prefix = monthKeyOf_(year, month);
+  const monthPractices = practices.filter(function (p) { return String(p.date || '').indexOf(prefix) === 0; });
+
+  const excusedOn = function (name, dateKey) {
+    return notices.some(function (n) {
+      return n && String(n.name) === String(name) && String(n.status) === '欠席'
+        && String(n.dateKey || '') === String(dateKey);
+    });
+  };
+  const calc = function (acc, list) {
+    const third = gradeNumberServer_(acc.grade) === 3;
+    const counted = list.filter(function (p) { return !(third && isAfterSummerStartServer_(p.date)); });
+    let attended = 0, excused = 0;
+    counted.forEach(function (p) {
+      const names = (p.attendedMembers || []).map(String);
+      if (names.indexOf(String(acc.name)) >= 0) attended++;
+      else if (excusedOn(acc.name, p.date)) excused++;
+    });
+    const denom = counted.length - excused;
+    return {
+      total: counted.length, attended: attended, excused: excused, denom: denom, thirdGrade: third,
+      rate: denom > 0 ? Math.min(100, Math.round((attended / denom) * 1000) / 10) : null
+    };
+  };
+
+  const rows = accounts.map(function (acc) {
+    const m = calc(acc, monthPractices);
+    const c = calc(acc, practices);
+    return {
+      id: String(acc.id), name: String(acc.name || ''), grade: String(acc.grade || ''),
+      class: String(acc.class || ''), role: String(acc.role || ''),
+      monthRate: m.rate, monthAttended: m.attended, monthDenom: m.denom,
+      monthExcused: m.excused, monthTotal: m.total, thirdGrade: m.thirdGrade,
+      totalRate: c.rate, totalAttended: c.attended, totalDenom: c.denom
+    };
+  });
+  rows.sort(function (a, b) {
+    return gradeNumberServer_(a.grade) - gradeNumberServer_(b.grade)
+      || String(a.class).localeCompare(String(b.class), 'ja')
+      || String(a.name).localeCompare(String(b.name), 'ja');
+  });
+  return { year: Number(year), month: Number(month), practiceCount: monthPractices.length, rows: rows };
+}
+
+/** 出席率レポートPDFを生成して非公開フォルダへ保存 */
+function buildAttendanceReportPdf_(report) {
+  const y = report.year, m = report.month;
+  const label = y + '年' + m + '月';
+  const rateCell = function (r) {
+    if (r == null) return '<span style="color:#888;">対象外</span>';
+    const color = r >= 80 ? '#1b7f3a' : (r < 50 ? '#c0392b' : '#b9770e');
+    return '<span style="color:' + color + '; font-weight:bold;">' + Number(r).toFixed(1) + '%</span>';
+  };
+  const rows = report.rows.map(function (r, i) {
+    return '<tr>'
+      + '<td style="text-align:center;">' + (i + 1) + '</td>'
+      + '<td style="text-align:center;">' + escHtmlServer_(r.grade || '-') + '</td>'
+      + '<td style="text-align:center;">' + escHtmlServer_(r.class || '-') + '</td>'
+      + '<td>' + escHtmlServer_(r.name) + escHtmlServer_(r.thirdGrade ? '（3年・夏以降自由参加）' : '') + '</td>'
+      + '<td style="text-align:center;">' + r.monthAttended + ' / ' + r.monthDenom + '</td>'
+      + '<td style="text-align:center;">' + rateCell(r.monthRate) + '</td>'
+      + '<td style="text-align:center;">' + r.totalAttended + ' / ' + r.totalDenom + '</td>'
+      + '<td style="text-align:center;">' + rateCell(r.totalRate) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+    + 'body{font-family:"Helvetica Neue",Arial,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;color:#111;margin:18px;}'
+    + 'h1{font-size:17px;margin:0 0 2px;}'
+    + '.sub{font-size:10px;color:#555;margin-bottom:10px;}'
+    + 'table{width:100%;border-collapse:collapse;font-size:10px;}'
+    + 'th{background:#f0f0f0;border:1px solid #bbb;padding:5px;font-size:10px;}'
+    + 'td{border:1px solid #ccc;padding:4px 5px;}'
+    + '.note{font-size:9px;color:#555;margin-top:10px;line-height:1.6;}'
+    + '</style></head><body>'
+    + '<h1>筑附中学剣道部　出席率レポート（' + label + '）</h1>'
+    + '<div class="sub">対象：' + report.rows.length + '名 ／ 当月の稽古回数：' + report.practiceCount
+    + '回 ／ 作成日：' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd') + '</div>'
+    + '<table><thead><tr>'
+    + '<th style="width:5%;">#</th><th style="width:8%;">学年</th><th style="width:10%;">クラス</th>'
+    + '<th>氏名</th><th style="width:13%;">当月 出席/分母</th><th style="width:11%;">当月出席率</th>'
+    + '<th style="width:13%;">累計 出席/分母</th><th style="width:11%;">累計出席率</th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<div class="note">※ 分母＝稽古回数−事前連絡のあった欠席回数（連絡済みの欠席は欠席扱いにしていません）。<br>'
+    + '※ 3年生は夏休み（7/10）以降の稽古を集計から除外しています（自由参加のため）。<br>'
+    + '※ このPDFは部活動管理システムが自動生成したものです。</div>'
+    + '</body></html>';
+
+  const fileName = '出席率レポート_' + monthKeyOf_(y, m) + '.pdf';
+  const blob = HtmlService.createHtmlOutput(html).getAs('application/pdf').setName(fileName);
+  const file = getAttachmentFolder_().createFile(blob);
+  return { fileId: file.getId(), fileName: fileName };
+}
+
+/** レポートを生成して保存（既にあればそれを返す） */
+function ensureMonthlyReport_(year, month) {
+  const key = monthKeyOf_(year, month);
+  const raw = readData_('system_monthly_reports', []);
+  const list = Array.isArray(raw) ? raw.slice() : [];
+  const exists = list.filter(function (r) { return r && String(r.monthKey) === key; })[0];
+  if (exists) return exists;
+  const data = computeAttendanceReport_(year, month);
+  const built = buildAttendanceReportPdf_(data);
+  const item = {
+    monthKey: key, fileId: built.fileId, fileName: built.fileName,
+    createdAt: new Date().toISOString(), practiceCount: data.practiceCount,
+    memberCount: data.rows.length, sentAt: null, sentBy: ''
+  };
+  list.unshift(item);
+  writeData_('system_monthly_reports', list.slice(0, 60));
+  bumpRev_('system_monthly_reports');
+  return item;
+}
+
+function viceIds_() {
+  const sanyi = readData_('system_sanyi_data', {}) || {};
+  return { captainId: String(sanyi.captainId || ''), vice1Id: String(sanyi.vice1Id || ''), vice2Id: String(sanyi.vice2Id || '') };
+}
+
+function isViceSession_(session) {
+  if (!session) return false;
+  const ids = viceIds_();
+  return String(session.id) === ids.vice1Id;
+}
+
+/** 副将ツール：生成済みレポートと未送信状況 */
+function apiMonthlyReportStatus(token) {
+  const session = requireSession_(token);
+  if (!session) return { ok: false, message: 'ログイン期限が切れました。再ログインしてください。' };
+  const raw = readData_('system_monthly_reports', []);
+  const list = (Array.isArray(raw) ? raw.slice() : []).sort(function (a, b) {
+    return String((b && b.monthKey) || '').localeCompare(String((a && a.monthKey) || ''));
+  });
+  const now = jstParts_();
+  const currentMonthKey = monthKeyOf_(now.y, now.m);
+  const pending = list.filter(function (r) { return r && !r.sentAt; }).map(function (r) { return r.monthKey; });
+  return { ok: true, reports: list, currentMonthKey: currentMonthKey, pending: pending };
+}
+
+/** 副将ツール：対象月のレポートPDFを生成（副将・作成者・顧問） */
+function apiGenerateMonthlyReport(token, monthKey) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログイン期限が切れました。再ログインしてください。');
+  if (!(session.isMaker || session.isAdvisor || session.isCaptain || isViceSession_(session))) {
+    throw new Error('副将・主将・顧問・作成者のみ実行できます。');
+  }
+  const mk = String(monthKey || '');
+  let y, m;
+  if (/^[0-9]{4}-[0-9]{2}$/.test(mk)) { y = Number(mk.slice(0, 4)); m = Number(mk.slice(5, 7)); }
+  else { const p = jstParts_(); y = p.y; m = p.m; }
+  const item = ensureMonthlyReport_(y, m);
+  try { appendAudit_(session.id, '月次出席率レポート生成', monthKeyOf_(y, m), ''); } catch (e) {}
+  return { ok: true, report: item };
+}
+
+/** 副将ツール：一斉送信済みの記録 */
+function markMonthlyReportSent(token, monthKey) {
+  const session = requireSession_(token);
+  if (!session) return { ok: false, message: 'ログイン期限が切れました。再ログインしてください。' };
+  if (!(session.isMaker || session.isAdvisor || isViceSession_(session))) {
+    return { ok: false, message: '副将または作成者のみ記録できます。' };
+  }
+  const key = String(monthKey || '');
+  const raw = readData_('system_monthly_reports', []);
+  const list = Array.isArray(raw) ? raw.slice() : [];
+  let hit = null;
+  list.forEach(function (r) {
+    if (r && String(r.monthKey) === key) { r.sentAt = new Date().toISOString(); r.sentBy = String(session.id); hit = r; }
+  });
+  writeData_('system_monthly_reports', list.slice(0, 60));
+  bumpRev_('system_monthly_reports');
+  try { appendAudit_(session.id, '月次出席率レポート送信', key, ''); } catch (e) {}
+  return { ok: true, report: hit };
+}
+
+/** 副将・作成者へシステム通知を送る */
+function notifyViceAndMaker_(text, label) {
+  const ids = viceIds_();
+  const targets = [ids.vice1Id, ids.captainId].filter(Boolean);
+  const accs = readData_('system_accounts', []);
+  (Array.isArray(accs) ? accs : []).forEach(function (a) {
+    if (a && (a.isMaker || String(a.role || '') === '作成者') && a.id != null) targets.push(String(a.id));
+  });
+  const uniq = {};
+  targets.forEach(function (id) {
+    const k = String(id || '');
+    if (!k || uniq[k]) return;
+    uniq[k] = true;
+    pushClubMessage_(k, text, 'official_system', label || '📣 【公式】出席率レポート', { isOfficial: true });
+  });
+  return Object.keys(uniq).length;
+}
+
+/** 未送信レポートのリマインド（1日1回まで） */
+function remindUnsentReports_() {
+  const raw = readData_('system_monthly_reports', []);
+  const list = Array.isArray(raw) ? raw : [];
+  const pending = list.filter(function (r) { return r && !r.sentAt; });
+  if (!pending.length) return { reminded: 0 };
+  const now = jstParts_();
+  const todayKey = String(now.y) + '-' + ('0' + now.m).slice(-2) + '-' + ('0' + now.d).slice(-2);
+  const props = PropertiesService.getScriptProperties();
+  const propKey = 'REPORT_REMIND_' + todayKey;
+  if (props.getProperty(propKey)) return { reminded: 0, skipped: true };
+  const keys = pending.map(function (r) { return r.monthKey; }).join('、');
+  notifyViceAndMaker_(
+    '【月末タスク】出席率レポート（' + keys + '）がまだ全員へ送信されていません。\n'
+    + '管理者ツール（副将）から「一斉送信」でPDFを添付して送信してください。',
+    '📣 【公式】出席率レポート未送信'
+  );
+  props.setProperty(propKey, String(Date.now()));
+  return { reminded: pending.length, months: keys };
+}
+
+/**
+ * 毎日20時台に実行されるトリガー本体。
+ * GASには「月末」トリガーが無いため「翌日が1日か」で月末を判定する。
+ */
+function monthlyAttendanceReportJob() {
+  const out = { ok: true, monthEnd: false, created: null, reminded: 0 };
+  try {
+    const now = new Date();
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const tp = jstParts_(tomorrow);
+    if (tp.d === 1) {
+      const p = jstParts_();
+      out.monthEnd = true;
+      const item = ensureMonthlyReport_(p.y, p.m);
+      out.created = item.monthKey;
+      notifyViceAndMaker_(
+        '【月末】' + item.monthKey + ' の出席率レポート（PDF）を自動生成しました。\n'
+        + '管理者ツール（副将）を開き、「全員への一斉送信」からPDFを添付して必ず送信してください。',
+        '📣 【公式】月次出席率レポート'
+      );
+    }
+  } catch (e) { out.error = String((e && e.message) || e); }
+  try { out.reminded = (remindUnsentReports_() || {}).reminded || 0; } catch (e) {}
+  return out;
+}
+
+/** トリガー設置（1回だけ実行してください） */
+function installMonthlyAttendanceReportTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  const exists = triggers.some(function (t) { return t.getHandlerFunction() === 'monthlyAttendanceReportJob'; });
+  if (!exists) {
+    ScriptApp.newTrigger('monthlyAttendanceReportJob')
+      .timeBased().everyDays(1).atHour(20).create();
+  }
+  return { ok: true, installed: !exists, trigger: 'monthlyAttendanceReportJob' };
+}
+
+/** 手動テスト用：今すぐ当月分のレポートを生成してみる（エディタから実行） */
+function testGenerateCurrentMonthReport() {
+  const p = jstParts_();
+  const item = ensureMonthlyReport_(p.y, p.m);
+  Logger.log('生成: ' + item.monthKey + ' / ' + item.fileName + ' / ' + item.fileId);
+  return item;
 }

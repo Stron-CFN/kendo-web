@@ -49,6 +49,12 @@
         .admin-btn.captain { background: #007bff; border-color: #007bff; }
         .admin-btn.maker-admin { background: #6f42c1; border-color: #6f42c1; }
         .admin-btn.maker-dev { background: #d9534f; border-color: #d9534f; }
+        .admin-btn.vice { background: #00695c; border-color: #00695c; }
+        .vice-warn { background:#fff8f8; border:2px solid #d9534f; border-radius:8px; padding:10px 12px; color:#b71c1c; font-size:0.85rem; font-weight:bold; line-height:1.6; }
+        .vice-ok { background:#f1f8f4; border:2px solid #2e7d32; border-radius:8px; padding:10px 12px; color:#1b5e20; font-size:0.85rem; font-weight:bold; }
+        .att-rate-high { color:#28a745; font-weight:bold; }
+        .att-rate-mid { color:#e67e22; font-weight:bold; }
+        .att-rate-low { color:#d9534f; font-weight:bold; }
 
         #archive-banner { display: none; background: #fff3cd; color: #856404; border: 2px solid #856404; padding: 10px; margin-bottom: 15px; font-weight: bold; text-align: center; border-radius: 4px; }
         #maint-notice-banner { display: none; background: #f8d7da; color: #721c24; border: 2px solid #721c24; padding: 10px; margin-bottom: 15px; font-weight: bold; text-align: center; border-radius: 4px; }
@@ -470,6 +476,7 @@
                 <button type="button" onclick="switchAdminTool('advisor')">👨‍🏫 顧問ツール</button>
                 <button type="button" onclick="switchAdminTool('captain')">👑 主将ツール</button>
                 <button type="button" onclick="switchAdminTool('maker-admin')">🛡 管理者ツール</button>
+                <button type="button" onclick="switchAdminTool('vice')">🎖 管理者ツール（副将）</button>
                 <button type="button" onclick="switchAdminTool('maker-dev')">🛠 作成者ツール</button>
             </div>
 
@@ -514,6 +521,73 @@
         </div>
     </div>
 
+    <!-- 管理者ツール（副将専用）モーダル -->
+    <div id="admin-vice-overlay" class="modal-overlay">
+        <div class="modal-card" style="max-width:720px;">
+            <button class="close-overlay-btn" onclick="closeAdminViceModal()">✕</button>
+            <div class="admin-switch-bar">
+                <span class="sw-label">管理者ツール切替:</span>
+                <button type="button" onclick="switchAdminTool('advisor')">👨‍🏫 顧問ツール</button>
+                <button type="button" onclick="switchAdminTool('captain')">👑 主将ツール</button>
+                <button type="button" onclick="switchAdminTool('maker-admin')">🛡 管理者ツール</button>
+                <button type="button" onclick="switchAdminTool('vice')">🎖 管理者ツール（副将）</button>
+                <button type="button" onclick="switchAdminTool('maker-dev')">🛠 作成者ツール</button>
+            </div>
+
+            <h2>🎖 管理者ツール（副将）</h2>
+            <p style="font-size:0.8rem; color:#555; margin-top:0;">
+                副将専用の管理ツールです。月ごとの出席率レポート（PDF）を運営（作成者）側で自動生成し、
+                副将が全員へ一斉送信します。<strong>毎月末の送信は必須</strong>です。
+            </p>
+
+            <div class="dev-section" style="border-color:#d9534f; background:#fff8f8;">
+                <h3 style="color:#b71c1c;">📌 今月の必須タスク（月末の出席率送信）</h3>
+                <div id="vice-required-banner" class="vice-warn" style="display:none;">読み込み中…</div>
+                <div id="vice-report-status" style="margin-top:10px; font-size:0.82rem; color:#333;">読み込み中…</div>
+                <button type="button" class="btn-primary" style="background:#607d8b; width:100%; margin-top:8px;" onclick="loadViceReportStatus()">🔄 送信状況を更新する</button>
+            </div>
+
+            <div class="dev-section" style="border-color:#00695c; background:#f2fbf9;">
+                <h3 style="color:#00695c;">📄 月次出席率レポート（PDF）の生成</h3>
+                <p style="font-size:0.78rem; color:#555;">
+                    対象月を選んで生成します。空欄なら当月分です。生成したPDFは一覧からいつでも開けます。
+                </p>
+                <div class="form-group"><label>対象月</label><input type="month" id="vice-report-month"></div>
+                <button type="button" class="btn-primary" style="background:#00695c; width:100%;" onclick="generateViceMonthlyReport()">📄 レポートPDFを生成する</button>
+                <div id="vice-report-list" style="margin-top:10px;"></div>
+            </div>
+
+            <div class="dev-section" style="border-color:#e67e22; background:#fffaf2;">
+                <h3 style="color:#e67e22;">📢 全員への一斉送信（要認証パスワード）</h3>
+                <p style="font-size:0.78rem; color:#555;">
+                    全員に公式DMを送ります。出席率PDFを添付して送る場合はチェックを入れてください。
+                    <strong>毎月の出席率送信は必須</strong>のため、未送信のまま月末を過ぎると警告が表示されます。
+                </p>
+                <div class="form-group"><label>本文</label><textarea id="vice-broadcast-text" rows="4" placeholder="例: ○月分の出席率レポートを配布します。確認してください。"></textarea></div>
+                <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="vice-attach-report" checked style="width:auto;">
+                    <label for="vice-attach-report" style="margin:0;">月次出席率レポート（PDF）を添付する</label>
+                </div>
+                <div class="form-group">
+                    <label style="color:#e67e22; font-weight:bold;">🔒 一斉送信の認証パスワード</label>
+                    <input type="password" id="vice-broadcast-pass" placeholder="認証パスワードを入力" autocomplete="off">
+                </div>
+                <button type="button" class="btn-primary" style="background:#e67e22; width:100%;" onclick="sendViceBroadcast()">全員に一斉送信する</button>
+                <div id="vice-broadcast-result" style="margin-top:8px; font-size:0.8rem; color:#333;"></div>
+            </div>
+
+            <div class="dev-section" style="border-color:#9e9e9e; background:#fafafa;">
+                <h3 style="color:#616161;">ℹ️ 運用メモ</h3>
+                <p style="font-size:0.78rem; color:#555; line-height:1.7;">
+                    ・月末（翌日が1日）になると、自動で当月分の出席率PDFが生成され、副将と作成者へ「送信してください」という通知が届きます。<br>
+                    ・送信が済むまで毎日リマインドされます。<br>
+                    ・3年生は夏休み（7/10）以降の稽古を集計から除外します。<br>
+                    ・事前に連絡のあった欠席は欠席扱いにせず、分母からも外します。
+                </p>
+            </div>
+        </div>
+    </div>
+
     <!-- 作成者ツールモーダル -->
     <div id="dev-tool-overlay" class="modal-overlay">
         <div class="modal-card" style="max-width: 650px;">
@@ -523,6 +597,7 @@
                 <button type="button" onclick="switchAdminTool('advisor')">👨‍🏫 顧問ツール</button>
                 <button type="button" onclick="switchAdminTool('captain')">👑 主将ツール</button>
                 <button type="button" onclick="switchAdminTool('maker-admin')">🛡 管理者ツール</button>
+                <button type="button" onclick="switchAdminTool('vice')">🎖 管理者ツール（副将）</button>
                 <button type="button" onclick="switchAdminTool('maker-dev')">🛠 作成者ツール</button>
             </div>
 
@@ -751,6 +826,7 @@
                 
                 <button id="btn-admin-advisor" class="admin-btn advisor" style="display:none;" onclick="openAdminAuthModal('advisor')">👨‍🏫 管理者ツール（顧問）</button>
                 <button id="btn-admin-captain" class="admin-btn captain" style="display:none;" onclick="openAdminAuthModal('captain')">👑 管理者ツール（主将）</button>
+                <button id="btn-admin-vice" class="admin-btn vice" style="display:none;" onclick="openAdminAuthModal('vice')">🎖 管理者ツール（副将）</button>
                 <button id="btn-admin-maker" class="admin-btn maker-admin" style="display:none;" onclick="openAdminAuthModal('maker-admin')">🛡 管理者ツール（作成者）</button>
                 <button id="btn-dev-tool" class="admin-btn maker-dev" style="display:none;" onclick="openAdminAuthModal('maker-dev')">🛠 作成者ツール</button>
                 <button id="btn-admin-accounting" class="admin-btn" style="display:none; background:#00897b; color:#fff;" onclick="openAdminAuthModal('accounting')">💰 管理者ツール（会計）</button>
@@ -846,13 +922,25 @@
                         <button class="submit-btn" onclick="sendDirectMessage()">送信する</button>
 
                     <div id="dm-official-block" class="form-block" style="border-color:#00897b; display:none;">
-                        <h3 style="color:#00897b;">🏫 運営への個別連絡（作成者専用）</h3>
-                        <p style="font-size:0.8rem; color:#555; margin:0 0 8px;">作成者から運営（公式アカウント）へ個人として連絡できます。やり取りは下の「💬 トーク」の運営チャネルで確認できます。</p>
-                        <div class="form-group">
-                            <label>メッセージ本文</label>
-                            <textarea id="dm-official-input" rows="3" placeholder="運営への連絡内容を入力"></textarea>
+                        <h3 style="color:#00897b;">🏫 運営から個人への個別連絡（作成者専用）</h3>
+                        <p style="font-size:0.8rem; color:#555; margin:0 0 8px;">運営＝作成者です。作成者ツールにログインしている間だけ、運営（公式）から部員・顧問へ<strong>個人宛</strong>の連絡を送信できます。受信した相手は「💬 トーク」の運営チャネルで確認します。</p>
+                        <div id="dm-official-lock" style="display:none; background:#fff8f8; border:1px dashed #d9534f; border-radius:6px; padding:8px 10px; margin-bottom:8px; font-size:0.8rem; color:#b71c1c;">
+                            🔒 この機能は<strong>作成者ツールへのログイン</strong>が済むまで使えません。
+                            <div style="margin-top:6px;">
+                                <button type="button" class="login-header-btn" style="width:auto; padding:6px 12px;" onclick="openAdminAuthModal('maker-dev')">🛠 作成者ツールにログインする</button>
+                            </div>
                         </div>
-                        <button class="submit-btn" style="background:#00897b;" onclick="sendOfficialMessage()">運営へ送信する</button>
+                        <div id="dm-official-form" style="display:none;">
+                            <div class="form-group">
+                                <label>送信先（部員・顧問を個別に選択）</label>
+                                <select id="dm-official-member-select"><option value="">-- 送信先を選択 --</option></select>
+                            </div>
+                            <div class="form-group">
+                                <label>メッセージ本文</label>
+                                <textarea id="dm-official-input" rows="3" placeholder="運営から伝える連絡内容を入力"></textarea>
+                            </div>
+                            <button class="submit-btn" style="background:#00897b;" onclick="sendOfficialMessageToMember()">この相手へ送信する</button>
+                        </div>
                     </div>
                     </div>
 
@@ -954,6 +1042,10 @@
                     <button type="button" class="login-header-btn" style="width:auto; padding:8px 16px;" onclick="openNewAccountModal()">新規アカウント登録</button>
                 </div>
                 <h2>部員・指導者一覧</h2>
+                <p style="font-size:0.78rem; color:#666; margin:0 0 8px 0;">
+                    クラスはログインしていなくても閲覧できます。稽古出席率はログイン中のみ表示され、
+                    <strong>事前に連絡があった欠席は分母から除外</strong>、<strong>3年生は夏休み（7/10）以降を除外</strong>して計算します。
+                </p>
                 <div id="roster-list-container">名簿データ読み込み中...</div>
             </div>
 
@@ -1019,7 +1111,7 @@
             <!-- 大会結果 -->
             <div id="tournament" class="section">
                 <h1>🏆 大会結果記録・閲覧</h1>
-                <div class="form-block">
+                <div class="form-block" id="tourney-entry-form">
                     <h3>🏆 新しい大会結果の登録</h3>
                     <div class="form-group">
                         <label>大会の選択</label>
@@ -1061,7 +1153,7 @@
             <!-- 審査結果 -->
             <div id="exam" class="section">
                 <h1>🥋 審査結果記録・閲覧</h1>
-                <div class="form-block">
+                <div class="form-block" id="exam-entry-form">
                     <h3>🥋 新しい審査結果の登録</h3>
                     <div class="form-group">
                         <label>受審部員</label>
@@ -1862,9 +1954,11 @@
                 // 3年生は夏休み以降の稽古を分母・分子の両方から除外（自由参加のため）
                 const counted = third ? practices.filter(pr => !isAfterSummerStart(pr.date)) : practices;
                 const attended = counted.filter(pr => (pr.attendedMembers || []).indexOf(a.name) >= 0).length;
-                const noticeCount = notices.filter(n => n.name === a.name).length;
-                const denom = Math.max(1, counted.length - noticeCount);
-                const rate = counted.length ? Math.min(100, (attended / denom) * 100) : 100;
+                // 事前連絡があった欠席は分母から除外（欠席扱いにしない）
+                const excused = counted.filter(pr => (pr.attendedMembers || []).indexOf(a.name) < 0
+                    && hasExcuseNoticeFor_(a.name, pr.date)).length;
+                const denom = counted.length - excused;
+                const rate = denom > 0 ? Math.min(100, (attended / denom) * 100) : 100;
                 return {
                     id: String(a.id), name: a.name, rate: rate, total: counted.length, attended: attended,
                     isSanyi: sanyiIds.indexOf(String(a.id)) >= 0,
@@ -3463,6 +3557,55 @@ ${userName} 様
         window.registerUser = registerUser;
 
         let GUEST_PUBLIC_ACCOUNTS = null;
+
+        /* ===== 名簿用 出席率（事前連絡ありの欠席は欠席扱いにしない／3年生は夏休み以降を除外） ===== */
+        function getPracticesArray_() {
+            try { return JSON.parse(localStorage.getItem('system_practices') || '[]'); } catch (e) { return []; }
+        }
+        // その稽古日に「事前連絡あり」の欠席連絡が出ているか
+        function hasExcuseNoticeFor_(name, dateKey) {
+            const key = String(dateKey || '');
+            if (!key) return false;
+            let localeKey = '';
+            try { localeKey = new Date(key + 'T00:00:00').toLocaleDateString(); } catch (e) { localeKey = ''; }
+            return getSavedAttendance().some(function (n) {
+                if (!n) return false;
+                if (String(n.name) !== String(name)) return false;
+                if (String(n.status) !== '欠席') return false;
+                if (String(n.dateKey || '') === key) return true;
+                return !!(localeKey && String(n.date || '').indexOf(localeKey) === 0);
+            });
+        }
+        function memberAttendanceStat(acc) {
+            const practices = getPracticesArray_().filter(function (p) { return p && p.date; });
+            const isThird = isThirdGrade_(acc.grade);
+            const counted = practices.filter(function (p) { return !(isThird && isAfterSummerStart(p.date)); });
+            let attended = 0, excused = 0;
+            counted.forEach(function (p) {
+                const names = (p.attendedMembers || []).map(String);
+                if (names.indexOf(String(acc.name)) >= 0) attended++;
+                else if (hasExcuseNoticeFor_(acc.name, p.date)) excused++;
+            });
+            const denom = counted.length - excused;
+            return {
+                total: counted.length, attended: attended, excused: excused, denom: denom,
+                rate: denom > 0 ? Math.min(100, (attended / denom) * 100) : null,
+                thirdGrade: isThird, exempt: denom <= 0
+            };
+        }
+        function rosterAttendanceCell(acc) {
+            if (!currentUser) return '<span style="color:#888; font-size:0.72rem;">ログインで表示</span>';
+            if (acc && acc.isAdvisor) return '<span style="color:#888; font-size:0.72rem;">対象外</span>';
+            const st = memberAttendanceStat(acc);
+            if (st.exempt) {
+                return '<span style="color:#888; font-size:0.72rem;">' + (st.thirdGrade ? '3年 自由参加' : '記録なし') + '</span>';
+            }
+            const cls = st.rate >= 80 ? 'att-rate-high' : (st.rate < 50 ? 'att-rate-low' : 'att-rate-mid');
+            return '<span class="' + cls + '">' + st.rate.toFixed(1) + '%</span>'
+                + '<div style="font-size:0.66rem; color:#666;">' + st.attended + '/' + st.denom + '回'
+                + (st.excused ? '・連絡済 ' + st.excused : '') + '</div>';
+        }
+
         function renderRosterList() {
             const container = document.getElementById('roster-list-container');
             if (!container) return;
@@ -3481,6 +3624,7 @@ ${userName} 様
                             <th>クラス</th>
                             <th>氏名</th>
                             <th>区分 / 役職</th>
+                            <th>稽古出席率</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -3501,6 +3645,7 @@ ${userName} 様
                         <td><strong>${classStr}</strong></td>
                         <td>${escapeHTML(a.name)} ${a.isMaker ? '🛡️' : ''}</td>
                         <td><span style="font-weight:bold; color:${a.isMaker ? '#6f42c1' : '#007bff'};">${escapeHTML(a.isAdvisor ? '顧問' : (a.role || '一般'))}</span></td>
+                        <td>${rosterAttendanceCell(a)}</td>
                     </tr>
                 `;
             });
@@ -3509,9 +3654,32 @@ ${userName} 様
             container.innerHTML = html;
         }
 
+        let guestPublicResultsLoaded = false;
+        function updateGuestResultPermissions() {
+            const guest = !currentUser;
+            ['tourney-entry-form', 'exam-entry-form'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = guest ? 'none' : '';
+            });
+        }
+        async function loadPublicResultsForGuest(force) {
+            if (currentUser || (guestPublicResultsLoaded && !force) || !gasAvailable()) return;
+            updateGuestResultPermissions();
+            try {
+                const res = await gasRun('apiPublicResults');
+                if (!res || !res.ok) return;
+                localStorage.setItem('system_tournaments', JSON.stringify(res.tournaments || []));
+                localStorage.setItem('system_exams', JSON.stringify(res.exams || []));
+                guestPublicResultsLoaded = true;
+                try { renderTournamentHistory(); } catch (e) {}
+                try { renderExamHistory(); } catch (e) {}
+            } catch (e) { console.warn('公開結果の取得に失敗:', e); }
+        }
+
         let guestRosterLoading = false;
         let guestRosterLoaded = false;
         async function loadPublicRosterForGuest(force) {
+            updateGuestResultPermissions();
             if (currentUser || guestRosterLoading || (guestRosterLoaded && !force)) return;
             if (!gasAvailable()) return;
             guestRosterLoading = true;
@@ -3528,32 +3696,13 @@ ${userName} 様
                 });
                 guestRosterLoaded = true;
                 VALID_ACCOUNTS = GUEST_PUBLIC_ACCOUNTS;
+                await loadPublicResultsForGuest(false);
                 renderRosterList();
             } catch (e) {
                 console.error('ゲスト名簿取得エラー:', e);
                 if (container) container.innerHTML = '<p style="font-size:0.85rem;color:#888;">名簿を読み込めませんでした。通信状態を確認して再読み込みしてください。</p>';
             } finally { guestRosterLoading = false; }
         }
-
-        let guestResultsLoading = false;
-        let guestResultsLoaded = false;
-        async function loadPublicResultsForGuest(force) {
-            if (currentUser || guestResultsLoading || (guestResultsLoaded && !force)) return;
-            if (!gasAvailable()) return;
-            guestResultsLoading = true;
-            try {
-                const res = await gasRun('apiPublicResults');
-                if (!res || !res.ok) throw new Error('結果データを取得できませんでした');
-                if (Array.isArray(res.tournaments)) saveTournaments(res.tournaments);
-                if (Array.isArray(res.exams)) saveExams(res.exams);
-                guestResultsLoaded = true;
-                try { renderTournamentHistory(); } catch (e) {}
-                try { renderExamHistory(); } catch (e) {}
-            } catch (e) {
-                console.error('ゲスト結果取得エラー:', e);
-            } finally { guestResultsLoading = false; }
-        }
-        window.loadPublicResultsForGuest = loadPublicResultsForGuest;
 
         function submitClassReselect() {
             const sel = document.getElementById('acc-reselect-class');
@@ -5123,11 +5272,6 @@ function attendanceDateKeyOf_(d) {
                 return;
             }
 
-            if (id === 'dm' && !isDmUnlocked && !isMakerUser) {
-                openSecondaryAuthModal('dm');
-                return;
-            }
-
             const sections = document.querySelectorAll('.section');
             sections.forEach(s => s.classList.remove('active'));
 
@@ -5148,8 +5292,7 @@ function attendanceDateKeyOf_(d) {
         function openSecondaryAuthModal(target) {
             pendingTargetSection = target;
             const titleMap = {
-                'toinkai': '🔒 「桐蔭会雑誌原稿」二次認証',
-                'dm': '🔒 「メッセージ (DM)」二次認証'
+                'toinkai': '🔒 「桐蔭会雑誌原稿」二次認証'
             };
             const titleEl = document.getElementById('secondary-auth-title');
             const passEl = document.getElementById('secondary-auth-pass');
@@ -5553,7 +5696,7 @@ function attendanceDateKeyOf_(d) {
         }
 
         /* ===== 管理者ツール切替（作成者は1クリックで全ツール） ===== */
-        const ADMIN_TOOL_TARGETS = { advisor: 'admin-advisor-overlay', captain: 'admin-captain-overlay', 'maker-admin': 'admin-maker-overlay', 'maker-dev': 'dev-tool-overlay' };
+        const ADMIN_TOOL_TARGETS = { advisor: 'admin-advisor-overlay', captain: 'admin-captain-overlay', vice: 'admin-vice-overlay', 'maker-admin': 'admin-maker-overlay', 'maker-dev': 'dev-tool-overlay' };
         window.switchAdminTool = function (type) {
             Object.keys(ADMIN_TOOL_TARGETS).forEach(function (k) {
                 const el = document.getElementById(ADMIN_TOOL_TARGETS[k]);
@@ -5751,6 +5894,7 @@ function attendanceDateKeyOf_(d) {
                 String(currentUser.id) === String(sanyi.vice1Id) || String(currentUser.id) === String(sanyi.vice2Id);
             const allowed = type === 'advisor' ? (isMakerUser || currentUser.isAdvisor || currentUser.id === '000001') :
                 type === 'captain' ? isCaptainUser :
+                type === 'vice' ? (isMakerUser || currentUser.isAdvisor || isCaptainUser) :
                 type === 'accounting' ? (isMakerUser || currentUser.isTreasurer === true || currentUser.role === '\u4f1a\u8a08') : isMakerUser;
             if (!allowed) return alert('この機能を利用する権限がありません。');
             // 入室前の専用ID・パスワード認証（30分間有効）
@@ -5767,6 +5911,11 @@ function attendanceDateKeyOf_(d) {
                 }
                 const el = document.getElementById('admin-captain-overlay');
                 if (el) el.style.display = 'flex';
+            } else if (type === 'vice') {
+                try { loadViceReportStatus(); } catch (e) {}
+                try { renderViceBroadcastState(); } catch (e) {}
+                const el = document.getElementById('admin-vice-overlay');
+                if (el) el.style.display = 'flex';
             } else if (type === 'maker-admin') {
                 renderMakerRosterAndPassList();
                 const el = document.getElementById('admin-maker-overlay');
@@ -5775,7 +5924,6 @@ function attendanceDateKeyOf_(d) {
                 navigateTo('accounting');
             } else if (type === 'maker-dev') {
                 populateSanyiSelects();
-                populateDevWarnUserSelect();
                 renderDevUserInfoList();
                 renderDevToolData();
                 renderDevManualManager();
@@ -5794,6 +5942,7 @@ function attendanceDateKeyOf_(d) {
             'accounting': { key: 'accounting', label: '💰 管理ツール（会計）' },
             captain: { key: 'captain', label: '👑 主将ツール' },
             advisor: { key: 'advisor', label: '👨‍🏫 顧問ツール' },
+            vice: { key: 'vice', label: '🎖 管理者ツール（副将）' },
             'maker-admin': { key: 'maker', label: '🛡 管理者ツール（作成者）' },
             'maker-dev': { key: 'maker', label: '🛠 作成者ツール' }
         };
@@ -5844,6 +5993,276 @@ function attendanceDateKeyOf_(d) {
             }
         }
 
+        /* ============================================================
+         * 運営（作成者）→ 個人への個別連絡
+         * ============================================================ */
+        function populateOfficialMemberSelect() {
+            const sel = document.getElementById('dm-official-member-select');
+            if (!sel) return;
+            const keep = sel.value;
+            const accounts = (getSavedAccounts() || []).filter(function (a) {
+                return a && !a.isMaker && String(a.grade || '') !== '卒業' && !isRetiredAccount(a);
+            }).sort(function (x, y) {
+                return (y.isAdvisor ? 1 : 0) - (x.isAdvisor ? 1 : 0)
+                    || gradeNumber_(y.grade) - gradeNumber_(x.grade)
+                    || String(x.name || '').localeCompare(String(y.name || ''), 'ja');
+            });
+            let html = '<option value="">-- 送信先を選択 --</option>';
+            accounts.forEach(function (a) {
+                const label = (a.isAdvisor ? '顧問' : (a.grade ? a.grade + '年' : '-')) + ' / '
+                    + (a.class && !a.isAdvisor ? a.class + ' / ' : '') + String(a.name || '');
+                html += '<option value="' + escapeHTML(String(a.id)) + '">' + escapeHTML(label) + '</option>';
+            });
+            sel.innerHTML = html;
+            if (keep) sel.value = keep;
+        }
+
+        async function sendOfficialMessageToMember() {
+            if (!currentUser) return alert('ログインしてください。');
+            const isMakerUser = !!(currentUser.isMaker || currentUser.role === '作成者');
+            if (!isMakerUser) return alert('この機能は作成者専用です。');
+            if (!hasAdminToolAccess('maker-admin')) {
+                alert('先に「作成者ツール」へログインしてください。');
+                openAdminAuthModal('maker-dev');
+                return;
+            }
+            const sel = document.getElementById('dm-official-member-select');
+            const input = document.getElementById('dm-official-input');
+            const targetId = sel ? String(sel.value || '') : '';
+            const content = input ? String(input.value || '').trim() : '';
+            if (!targetId) return alert('送信先を選択してください。');
+            if (!content) return alert('メッセージ本文を入力してください。');
+            if (!gasAvailable() || !gasToken()) return alert('ログイン状態を確認できません。再ログインしてください。');
+            try {
+                const res = await gasRun('apiCreatorSendToMember', gasToken(), targetId, content);
+                if (!res || !res.ok) throw new Error((res && res.message) || '送信できませんでした');
+                if (input) input.value = '';
+                await syncFromGAS(false);
+                try { refreshAfterSync(); } catch (e) {}
+                showToast(res.message || '運営から個別連絡を送信しました');
+            } catch (e) {
+                alert('送信に失敗しました: ' + ((e && e.message) || e));
+            }
+        }
+
+        /* ============================================================
+         * 管理者ツール（副将）: 月次出席率レポート & 一斉送信
+         * ============================================================ */
+        let VICE_REPORTS = [];
+        let VICE_STATUS = null;
+
+        function viceMonthKeyOf_(d) {
+            const x = d || new Date();
+            return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0');
+        }
+        function vicePrevMonthKey_() {
+            const d = new Date();
+            d.setDate(1);
+            d.setMonth(d.getMonth() - 1);
+            return viceMonthKeyOf_(d);
+        }
+        function closeAdminViceModal() {
+            const el = document.getElementById('admin-vice-overlay');
+            if (el) el.style.display = 'none';
+        }
+
+        async function loadViceReportStatus() {
+            const box = document.getElementById('vice-report-status');
+            if (!currentUser || !gasToken()) {
+                if (box) box.innerHTML = '<p class="no-data-msg">ログインしてください。</p>';
+                return;
+            }
+            if (box) box.innerHTML = '<p style="font-size:0.8rem; color:#888;">読み込み中…</p>';
+            try {
+                const res = await gasRun('apiMonthlyReportStatus', gasToken());
+                if (!res || !res.ok) throw new Error((res && res.message) || '状況を取得できませんでした');
+                VICE_STATUS = res;
+                VICE_REPORTS = res.reports || [];
+                renderViceReportStatus(res);
+            } catch (e) {
+                if (box) box.innerHTML = '<p style="font-size:0.8rem; color:#d9534f;">状況を取得できません: ' + escapeHTML((e && e.message) || e) + '</p>';
+            }
+        }
+
+        function renderViceReportStatus(res) {
+            const banner = document.getElementById('vice-required-banner');
+            const box = document.getElementById('vice-report-status');
+            const list = document.getElementById('vice-report-list');
+            const monthInput = document.getElementById('vice-report-month');
+            const nowKey = viceMonthKeyOf_(new Date());
+            if (monthInput && !monthInput.value) monthInput.value = nowKey;
+
+            const reports = (res && res.reports) || VICE_REPORTS || [];
+            const pending = (res && res.pending) || [];
+            const thisMonth = reports.filter(function (r) { return r && r.monthKey === nowKey; })[0];
+            const sentThisMonth = !!(thisMonth && thisMonth.sentAt);
+            const todayDay = new Date().getDate();
+            const isMonthEndSoon = todayDay >= 25;
+
+            if (banner) {
+                if (pending.length) {
+                    banner.className = 'vice-warn';
+                    banner.style.display = 'block';
+                    banner.innerHTML = '⚠️ 未送信の出席率レポートがあります（' + pending.map(function (r) { return r.monthKey; }).join('、')
+                        + '）。月末の送信は必須です。下の「一斉送信」からPDFを添付して送信してください。';
+                } else if (!sentThisMonth && isMonthEndSoon) {
+                    banner.className = 'vice-warn';
+                    banner.style.display = 'block';
+                    banner.innerHTML = '⚠️ 今月（' + nowKey + '）の出席率レポートがまだ全員へ送信されていません。月末までに必ず送信してください。';
+                } else {
+                    banner.className = 'vice-ok';
+                    banner.style.display = 'block';
+                    banner.innerHTML = sentThisMonth
+                        ? '✅ 今月（' + nowKey + '）の出席率レポートは送信済みです。'
+                        : 'ℹ️ 今月（' + nowKey + '）の送信はまだです。月末に送信してください。';
+                }
+            }
+
+            if (box) {
+                if (!reports.length) {
+                    box.innerHTML = '<p style="font-size:0.8rem; color:#888;">まだレポートは生成されていません。「レポートPDFを生成する」から作成できます。</p>';
+                } else {
+                    let html = '<table style="width:100%; border-collapse:collapse; font-size:0.78rem;">'
+                        + '<thead><tr style="background:#f5f5f5;"><th style="text-align:left; padding:5px;">対象月</th>'
+                        + '<th style="text-align:left; padding:5px;">稽古回数</th><th style="text-align:left; padding:5px;">人数</th>'
+                        + '<th style="text-align:left; padding:5px;">送信状況</th></tr></thead><tbody>';
+                    reports.slice(0, 12).forEach(function (r) {
+                        const sent = r && r.sentAt
+                            ? '<span style="color:#2e7d32; font-weight:bold;">送信済み</span>'
+                            : '<span style="color:#d9534f; font-weight:bold;">未送信</span>';
+                        html += '<tr>'
+                            + '<td style="padding:5px; border-bottom:1px solid #eee; font-weight:bold;">' + escapeHTML(String((r && r.monthKey) || '')) + '</td>'
+                            + '<td style="padding:5px; border-bottom:1px solid #eee;">' + Number((r && r.practiceCount) || 0) + ' 回</td>'
+                            + '<td style="padding:5px; border-bottom:1px solid #eee;">' + Number((r && r.memberCount) || 0) + ' 名</td>'
+                            + '<td style="padding:5px; border-bottom:1px solid #eee;">' + sent + '</td>'
+                            + '</tr>';
+                    });
+                    html += '</tbody></table>';
+                    box.innerHTML = html;
+                }
+            }
+
+            if (list) {
+                if (!reports.length) {
+                    list.innerHTML = '';
+                } else {
+                    let html = '<div style="font-size:0.78rem; font-weight:bold; margin-bottom:4px;">📂 生成済みPDF</div>';
+                    reports.slice(0, 12).forEach(function (r) {
+                        if (!r || !r.fileId) return;
+                        html += '<div style="margin:4px 0;">'
+                            + '<button type="button" class="login-header-btn" style="width:auto; padding:5px 10px; font-size:0.75rem;" '
+                            + 'onclick="openProtectedDriveFile(\'' + escapeHTML(String(r.fileId)) + '\', \'' + escapeHTML(String(r.fileName || 'attendance.pdf')) + '\')">'
+                            + '📎 ' + escapeHTML(String(r.monthKey || '')) + ' の出席率PDFを開く</button></div>';
+                    });
+                    list.innerHTML = html;
+                }
+            }
+            renderViceBroadcastState();
+        }
+
+        function renderViceBroadcastState() {
+            const res = document.getElementById('vice-broadcast-result');
+            if (!res) return;
+            if (!VICE_STATUS) return;
+            const nowKey = viceMonthKeyOf_(new Date());
+            const reports = (VICE_STATUS.reports || []);
+            const thisMonth = reports.filter(function (r) { return r && r.monthKey === nowKey; })[0];
+            if (thisMonth && thisMonth.sentAt) {
+                res.innerHTML = '<span style="color:#2e7d32; font-weight:bold;">✅ 今月分は送信済みです（' + escapeHTML(String(thisMonth.sentAt).slice(0, 10)) + '）</span>';
+            }
+        }
+
+        async function generateViceMonthlyReport() {
+            if (!currentUser || !gasToken()) return alert('ログインしてください。');
+            const el = document.getElementById('vice-report-month');
+            const monthKey = (el && el.value) ? String(el.value) : viceMonthKeyOf_(new Date());
+            try {
+                showToast('レポートを生成しています…');
+                const res = await gasRun('apiGenerateMonthlyReport', gasToken(), monthKey);
+                if (!res || !res.ok) throw new Error((res && res.message) || '生成できませんでした');
+                showToast('出席率レポート（' + monthKey + '）を生成しました');
+                await loadViceReportStatus();
+            } catch (e) {
+                alert('レポートを生成できませんでした: ' + ((e && e.message) || e));
+            }
+        }
+
+        async function sendViceBroadcast() {
+            if (!currentUser) return alert('ログインしてください。');
+            const contentEl = document.getElementById('vice-broadcast-text');
+            const passEl = document.getElementById('vice-broadcast-pass');
+            const attachEl = document.getElementById('vice-attach-report');
+            const content = contentEl ? String(contentEl.value || '').trim() : '';
+            const pass = passEl ? String(passEl.value || '') : '';
+            const wantPdf = !!(attachEl && attachEl.checked);
+            if (!content) return alert('本文を入力してください。');
+            if (!pass) return alert('認証パスワードを入力してください。');
+
+            const okPass = await checkSecondaryPass('vice_broadcast', pass);
+            if (!okPass) return alert('認証パスワードが正しくありません。');
+
+            let report = null;
+            try {
+                if (wantPdf) {
+                    const monthEl = document.getElementById('vice-report-month');
+                    const monthKey = (monthEl && monthEl.value) ? String(monthEl.value) : viceMonthKeyOf_(new Date());
+                    const gr = await gasRun('apiGenerateMonthlyReport', gasToken(), monthKey);
+                    if (!gr || !gr.ok) throw new Error((gr && gr.message) || 'レポートを用意できませんでした');
+                    report = gr.report || null;
+                }
+                const msgs = getSavedMessages();
+                msgs.unshift({
+                    id: 'msg_' + Date.now() + '_vice',
+                    senderId: String(currentUser.id),
+                    senderName: '🎖 副将 ' + String(currentUser.name || ''),
+                    receiverId: 'ALL',
+                    content: content,
+                    attachFileId: report ? String(report.fileId || '') : null,
+                    attachName: report ? String(report.fileName || '') : null,
+                    attachType: report ? 'application/pdf' : null,
+                    monthlyReport: report ? String(report.monthKey || '') : null,
+                    date: new Date().toLocaleString(),
+                    isOfficial: true
+                });
+                saveSavedMessages(msgs);
+                if (report && report.monthKey) {
+                    try { await gasRun('markMonthlyReportSent', gasToken(), String(report.monthKey)); } catch (e) {}
+                }
+                if (contentEl) contentEl.value = '';
+                if (passEl) passEl.value = '';
+                showToast('全員へ一斉送信しました');
+                try { renderDMUI(); } catch (e) {}
+                await loadViceReportStatus();
+                const res = document.getElementById('vice-broadcast-result');
+                if (res) res.innerHTML = '<span style="color:#2e7d32; font-weight:bold;">✅ 送信しました（' + new Date().toLocaleString() + '）</span>';
+            } catch (e) {
+                alert('送信に失敗しました: ' + ((e && e.message) || e));
+            }
+        }
+
+        // 非公開Driveファイル（出席率PDF等）をログイン状態で開く
+        async function openProtectedDriveFile(fileId, name) {
+            if (!fileId) return alert('ファイルがありません。');
+            if (!gasToken()) return alert('ログインしてください。');
+            const viewer = window.open('about:blank', '_blank');
+            try {
+                const res = await gasRun('getProtectedFile', fileId, gasToken());
+                if (!res || !res.ok) throw new Error((res && res.message) || '取得できませんでした');
+                const bytes = base64ToBytes(res.base64);
+                const blob = new Blob([bytes], { type: res.mimeType || 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+                if (viewer && !viewer.closed) viewer.location.href = url;
+                else {
+                    const a = document.createElement('a');
+                    a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.click();
+                }
+                setTimeout(function () { URL.revokeObjectURL(url); }, 120000);
+            } catch (e) {
+                if (viewer && !viewer.closed) viewer.close();
+                alert('ファイルを開けません: ' + escapeHTML(name || '') + ' / ' + ((e && e.message) || e));
+            }
+        }
+
         function renderDMUI() {
             const dmMain = document.getElementById('dm-main-block');
             let loginNotice = document.getElementById('dm-login-required-notice');
@@ -5882,7 +6301,7 @@ function attendanceDateKeyOf_(d) {
 
             const sanyi = getSanyiData();
             const isMakerUser = currentUser && (currentUser.isMaker || currentUser.role === '作成者');
-            const isCurrentSanyi = currentUser && (currentUser.id === sanyi.captainId || currentUser.id === sanyi.vice1Id || currentUser.id === sanyi.vice2Id);
+            const isCurrentSanyi = !!(currentUser && !isMakerUser && [sanyi.captainId, sanyi.vice1Id, sanyi.vice2Id].some(id => String(id || '') === String(currentUser.id)));
             if (sanyiBox) sanyiBox.style.display = isCurrentSanyi ? 'block' : 'none';
 
             if (historyContainer && currentUser) {
@@ -5908,7 +6327,16 @@ function attendanceDateKeyOf_(d) {
                 }
             }
             const officialBox = document.getElementById('dm-official-block');
-            if (officialBox) officialBox.style.display = isMakerUser ? 'block' : 'none';
+            if (officialBox) {
+                // 運営（＝作成者）から個人への連絡は「作成者ツールにログイン」してから使える
+                const makerUnlocked = !!(isMakerUser && hasAdminToolAccess('maker-admin'));
+                officialBox.style.display = isMakerUser ? 'block' : 'none';
+                const lockEl = document.getElementById('dm-official-lock');
+                const formEl = document.getElementById('dm-official-form');
+                if (lockEl) lockEl.style.display = makerUnlocked ? 'none' : 'block';
+                if (formEl) formEl.style.display = makerUnlocked ? 'block' : 'none';
+                if (makerUnlocked) { try { populateOfficialMemberSelect(); } catch (e) {} }
+            }
             if (typeof renderDmChannels === 'function') {
                 if (window.__dmThreadPartner) { try { renderDmThread(); } catch (e) {} }
                 else { try { renderDmChannels(); } catch (e) {} }
@@ -5987,7 +6415,17 @@ function attendanceDateKeyOf_(d) {
             if (threadView) threadView.style.display = 'none';
             if (placeholder) placeholder.style.display = 'block';
             listEl.style.display = '';
-            const chans = dmChannels();
+            const sanyiState = getSanyiData() || {};
+            const makerNow = !!(currentUser && (currentUser.isMaker || currentUser.role === '作成者'));
+            const sanyiMemberNow = !!(currentUser && !makerNow &&
+                [sanyiState.captainId, sanyiState.vice1Id, sanyiState.vice2Id]
+                .some(id => String(id || '') === String(currentUser.id)));
+            const chans = dmChannels().filter(c => {
+                const p = String(c.partner || '');
+                const group = (getSavedGroupDMs() || []).find(g => String(g.id || '') === p);
+                const protectedChannel = p.indexOf('sanyi') === 0 || p.indexOf('三役') >= 0 || !!(group && (group.isSanyi || group.sanyi));
+                return !protectedChannel || sanyiMemberNow;
+            });
             if (!chans.length) {
                 listEl.innerHTML = '<p class="no-data-msg" style="margin:4px 0;">まだやり取りはありません。「✉️ 個別メッセージを送信」から話しかけてみましょう。</p>';
                 return;
@@ -6150,6 +6588,7 @@ function attendanceDateKeyOf_(d) {
             const btnMakerAdmin = document.getElementById('btn-admin-maker');
             const btnDevTool = document.getElementById('btn-dev-tool');
             const btnAccounting = document.getElementById('btn-admin-accounting');
+            const btnVice = document.getElementById('btn-admin-vice');
 
             const menuDm = document.getElementById('menu-dm-item');
             const menuToinkai = document.getElementById('menu-toinkai-item');
@@ -6174,6 +6613,7 @@ function attendanceDateKeyOf_(d) {
                     if (btnMakerAdmin) btnMakerAdmin.style.display = "none";
                     if (btnDevTool) btnDevTool.style.display = "none";
                     if (btnAccounting) btnAccounting.style.display = "none";
+                if (btnVice) btnVice.style.display = "none";
                     if (userDisp) userDisp.innerText = `${currentUser.name} 様（旧主将・原稿提出のみ）`;
                     return;
                 }
@@ -6186,6 +6626,7 @@ function attendanceDateKeyOf_(d) {
                 if (btnCaptain) btnCaptain.style.display = isCaptain ? "block" : "none";
                 if (btnMakerAdmin) btnMakerAdmin.style.display = isMakerUser ? "block" : "none";
                 if (btnDevTool) btnDevTool.style.display = isMakerUser ? "block" : "none";
+                if (btnVice) btnVice.style.display = (isMakerUser || currentUser.isAdvisor || isCaptain) ? "block" : "none";
                 if (btnAccounting) btnAccounting.style.display = (isMakerUser || currentUser.isTreasurer === true || currentUser.role === '\u4f1a\u8a08') ? "block" : "none";
 
                 const reselectBlock = document.getElementById('class-reselect-block');
@@ -7268,15 +7709,30 @@ function attendanceDateKeyOf_(d) {
 
       async function getMic() {
         if (CALL.stream) return true;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          alert('このブラウザ／環境ではマイクを利用できません。\n別のブラウザ（Chrome・Safari 等）でお試しください。');
+          return false;
+        }
         try { CALL.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); return true; }
-        catch (e) { alert('マイクを使用できません：' + ((e && e.message) || e)); return false; }
+        catch (e) {
+          const en = (e && e.name) || '';
+          if (en === 'NotAllowedError' || /permission|denied/i.test(String((e && e.message) || e))) {
+            alert('🎤 マイクの使用が許可されていません（Permission denied）。\n\n【許可の手順】\n1. ブラウザのアドレスバー右側のアイコン（🎤 または 🔒 印）をクリック\n2. 「マイク」を「許可」に変更\n3. ページを再読み込み（再ログイン不要）してもう一度発信\n\n※ それでも出ない場合は、ブラウザ設定 → サイトの設定 → マイク からこのサイトを「許可」にしてください。\n※ 前回「ブロック」を選んだ場合は、まずブロックを解除する必要があります。');
+          } else if (en === 'NotFoundError' || en === 'DevicesNotFoundError' || en === 'OverconstrainedError') {
+            alert('🎤 マイク（入力デバイス）が見つかりません。\nマイクが接続されているか確認して、ページを再読み込みしてください。');
+          } else if (en === 'NotReadableError' || en === 'TrackStartError') {
+            alert('🎤 マイクが他のアプリで使用中のため開けません。\nZoom・Meet など他の通話アプリを閉じてから再試行してください。');
+          } else {
+            alert('マイクを使用できません：' + ((e && e.message) || e) + '\n\nブラウザのマイク権限を確認して、ページを再読み込みしてください。');
+          }
+          return false;
+        }
       }
 
       window.startVoiceCall = async function () {
         if (!gasToken() || typeof currentUser === 'undefined' || !currentUser) return alert('ログインしてください。');
         const uid = $('call-user-select').value;
         const gid = $('call-group-select').value;
-        try { closeCallTargetModal(); } catch (e) {}
         let targets = [], label = '';
         if (gid) {
           const g = getSavedGroupDMs().find(x => String(x.id) === String(gid));
@@ -7463,5 +7919,6 @@ function attendanceDateKeyOf_(d) {
     })();
     </script>
 
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092" integrity="sha512-UKNk8GbxkABxKcXYuLkO16EleLGUkcvJWtpSNmExE0Too3ZaFAxTscNWEc1OdAv5/BikHawapSCaiD2XCmp+Bw==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>
