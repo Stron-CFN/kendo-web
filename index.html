@@ -184,6 +184,15 @@
 
     <div id="toast-notification">✓ 同期完了しました！</div>
 
+    <!-- 添付ファイル／PDF ビューア（別タブを開かないのでポップアップブロックされない） -->
+    <div id="file-viewer-overlay" class="modal-overlay" onclick="if(event.target===this)closeFileViewer()">
+        <div class="modal-card" style="max-width:900px; width:100%;">
+            <button class="close-overlay-btn" onclick="closeFileViewer()">✕</button>
+            <h2 id="file-viewer-title" style="font-size:1rem;">ファイル</h2>
+            <div id="file-viewer-frame"></div>
+        </div>
+    </div>
+
     <!-- ログインモーダル -->
     <div id="login-overlay" class="modal-overlay">
         <div class="modal-card">
@@ -333,6 +342,33 @@
         <div class="modal-card">
             <button class="close-overlay-btn" onclick="closeAdminAdvisorModal()">✕</button>
             <h2>👨‍🏫 管理者ツール（顧問専用）</h2>
+            <div class="dev-section" style="border-color:#ef6c00;background:#fff8f1;">
+<h3 style="color:#ef6c00;">⏰ 利用時間・特別日設定（作成者・顧問）</h3>
+<p style="font-size:0.8rem;color:#555;">1行に1件入力。大会・審査日は YYYY-MM-DD,名称、学校休業期間は YYYY-MM-DD,YYYY-MM-DD,名称 の形式です。</p>
+<textarea id="access-exception-input-maker" rows="4" style="width:100%;" placeholder="2026-12-20,大会
+2026-12-24,2027-01-07,冬休み"></textarea>
+<button type="button" class="btn-primary" style="width:100%;margin-top:6px;background:#ef6c00;" onclick="saveAccessExceptionSettings('maker')">特別日設定を保存</button>
+<button type="button" class="btn-primary" style="width:100%;margin-top:6px;background:#607d8b;" onclick="loadAccessExceptionSettings('maker')">現在の設定を読み込む</button>
+<p style="font-size:0.75rem;color:#666;">通常制限：月 8:30〜14:00／火〜金 8:30〜15:00／土 8:30〜12:00。毎日12:30〜13:00、日曜、登録した特別日は終日利用可能です。</p>
+</div>
+            <div class="dev-section advisor-box" style="border-color:#1565c0;background:#f2f7ff;">
+                <h3 style="color:#1565c0;">📜 全員の操作履歴（顧問・作成者のみ）</h3>
+                <p style="font-size:0.8rem;color:#555;">全ユーザーのログインやデータ変更などの履歴を確認できます。</p>
+                <div class="form-group"><label>部員ごとの履歴（全員表示も選択可）</label><select id="advisor-audit-member-select" onchange="loadSystemAuditLog('advisor')"><option value="">全員の履歴</option></select></div>
+                <button type="button" class="btn-primary" style="width:100%;" onclick="loadSystemAuditLog('advisor')">操作履歴を読み込む</button>
+                <div id="advisor-system-audit-log-list" style="margin-top:10px;max-height:320px;overflow:auto;background:#fff;padding:8px;border:1px solid #ccd;border-radius:6px;"></div>
+            </div>
+            <div class="dev-section advisor-box" style="border-color:#1565c0;background:#f4f8ff;">
+                <h3 style="color:#1565c0;">📊 出欠状況の自動集計</h3>
+                <p style="font-size:.78rem;color:#555;">稽古記録・事前の欠席連絡をもとに部員別の出席率を集計します。</p>
+                <button type="button" class="btn-primary" onclick="loadAttendanceSummary()">出欠状況を集計</button>
+                <div id="advisor-attendance-summary-list" style="margin-top:10px;overflow:auto;"></div>
+            </div>
+            <div class="dev-section advisor-box" style="border-color:#00897b;background:#f2fbf9;">
+                <h3 style="color:#00897b;">📬 お知らせの既読確認</h3>
+                <button type="button" class="btn-primary" style="background:#00897b;" onclick="loadNoticeReadStatus('advisor')">既読状況を読み込む</button>
+                <div id="advisor-notice-read-status-list" style="margin-top:10px;max-height:360px;overflow:auto;"></div>
+            </div>
             
             <div class="dev-section advisor-box" style="border-color:#28a745; background:#f4fff4;">
                 <h3 style="color:#28a745;">📅 年度予定のアップロード (画像 / PDF)</h3>
@@ -342,6 +378,7 @@
                 </div>
                 <button class="btn-primary" style="background:#28a745; width:100%;" onclick="uploadYearlyPlanByAdvisor()">年度予定をアップロード・更新</button>
                 <div class="vacation-editor-slot"></div>
+                <div class="autooff-editor-slot"></div>
             </div>
 
             <div class="dev-section advisor-box" style="border-color:#00897b; background:#f2fbf9;">
@@ -517,6 +554,26 @@
                 <button type="button" id="roster-csv-import-btn" class="btn-primary" style="background:#ff9800; width:100%; margin-top:8px;" onclick="importRosterCsv()">📥 この内容で一括登録する</button>
                 <div id="roster-csv-result" style="margin-top:10px;"></div>
             </div>
+            <div class="dev-section maker-box" style="border-color:#1565c0;background:#f4f8ff;">
+                <h3 style="color:#1565c0;">📊 出欠状況の自動集計</h3>
+                <p style="font-size:.78rem;color:#555;">稽古記録と事前連絡をもとに、部員ごとの出席率・出席回数を集計します。作成者・顧問のみ閲覧できます。</p>
+                <button type="button" class="btn-primary" onclick="loadAttendanceSummary()">出欠状況を集計</button>
+                <div id="attendance-summary-list" style="margin-top:10px;overflow:auto;"></div>
+            </div>
+            <div class="dev-section maker-box" style="border-color:#00897b;background:#f2fbf9;">
+                <h3 style="color:#00897b;">📬 お知らせの既読確認</h3>
+                <p style="font-size:.78rem;color:#555;">全体向け公式お知らせについて、既読人数と未読部員を確認できます。既読はサーバー側に記録します。</p>
+                <button type="button" class="btn-primary" style="background:#00897b;" onclick="loadNoticeReadStatus()">既読状況を読み込む</button>
+                <div id="notice-read-status-list" style="margin-top:10px;max-height:360px;overflow:auto;"></div>
+            </div>
+            <div class="dev-section maker-box" style="border-color:#ff9800;background:#fffaf2;">
+                <h3 style="color:#e67e22;">📝 部員情報の一括更新</h3>
+                <p style="font-size:.78rem;color:#555;">CSV形式：<code>ID,学年,クラス,状態</code>。状態は active（在籍）/retired（退部）/graduated（卒業）/left（停止）。空欄項目は原則維持、クラス欄は空欄で消去できます。</p>
+                <textarea id="roster-update-csv" rows="4" style="width:100%;font-family:monospace;" placeholder="ID,学年,クラス,状態&#10;260510,2,1,active"></textarea>
+                <button type="button" class="btn-primary" style="background:#ff9800;margin-top:6px;" onclick="previewRosterBulkUpdate()">更新内容を確認</button>
+                <div id="roster-update-preview" style="margin-top:8px;"></div>
+                <button type="button" class="btn-primary" style="background:#d97706;width:100%;margin-top:8px;" onclick="applyRosterBulkUpdate()">確認した内容で一括更新</button>
+            </div>
             </div>
         </div>
     </div>
@@ -602,6 +659,70 @@
             </div>
 
             <h2>🛠 作成者全能コントロールパネル (全全管理者機能 統合統合)</h2>
+            <div class="dev-section maker-box" style="border-color:#00897b; background:#f2fbf9;">
+                <h3 style="color:#00897b;">✉️ 個人への公式連絡</h3>
+                <p style="font-size:0.82rem; color:#555;">作成者ツールから、部員または顧問を1人選んで運営（作成者）名義の個別メッセージを送信できます。相手の「トーク」に届きます。</p>
+                <div class="form-group">
+                    <label>送信先（部員・顧問）</label>
+                    <select id="maker-official-member-select"><option value="">-- 送信先を選択 --</option></select>
+                </div>
+                <div class="form-group">
+                    <label>連絡内容</label>
+                    <textarea id="maker-official-input" rows="3" maxlength="4000" placeholder="個別に伝える内容を入力してください"></textarea>
+                </div>
+                <button type="button" class="btn-primary" style="width:100%; background:#00897b;" onclick="sendOfficialMessageToMember('maker')">この相手へ公式連絡を送信</button>
+            </div>
+
+            <div class="dev-section" style="border-color:#ef6c00;background:#fff8f1;">
+<h3 style="color:#ef6c00;">⏰ 利用時間・特別日設定（作成者・顧問）</h3>
+<p style="font-size:0.8rem;color:#555;">1行に1件入力。大会・審査日は YYYY-MM-DD,名称、学校休業期間は YYYY-MM-DD,YYYY-MM-DD,名称 の形式です。</p>
+<textarea id="access-exception-input-advisor" rows="4" style="width:100%;" placeholder="2026-12-20,大会
+2026-12-24,2027-01-07,冬休み"></textarea>
+<button type="button" class="btn-primary" style="width:100%;margin-top:6px;background:#ef6c00;" onclick="saveAccessExceptionSettings('advisor')">特別日設定を保存</button>
+<button type="button" class="btn-primary" style="width:100%;margin-top:6px;background:#607d8b;" onclick="loadAccessExceptionSettings('advisor')">現在の設定を読み込む</button>
+<p style="font-size:0.75rem;color:#666;">通常制限：月 8:30〜14:00／火〜金 8:30〜15:00／土 8:30〜12:00。毎日12:30〜13:00、日曜、登録した特別日は終日利用可能です。</p>
+</div>
+            <div class="dev-section maker-box" style="border-color:#1565c0; background:#f2f7ff;">
+                <h3 style="color:#1565c0;">📜 全員の操作履歴（作成者・顧問のみ閲覧可）</h3>
+                <p style="font-size:0.8rem;color:#555;">ログイン、データの保存・変更、メッセージ送信、バックアップ・復元などを記録します。</p>
+                <div class="form-group"><label>部員ごとの履歴（全員表示も選択可）</label><select id="maker-audit-member-select" onchange="loadSystemAuditLog('maker')"><option value="">全員の履歴</option></select></div>
+                <button type="button" class="btn-primary" style="width:100%;" onclick="loadSystemAuditLog('maker')">最新の操作履歴を読み込む</button>
+                <div id="system-audit-log-list" style="margin-top:10px;max-height:320px;overflow:auto;background:#fff;padding:8px;border:1px solid #ccd;border-radius:6px;"></div>
+            </div>
+            <div class="dev-section maker-box" style="border-color:#c62828;background:#fff5f5;">
+                <h3 style="color:#c62828;">🗑️ 活動データの削除</h3>
+                <p style="font-size:0.8rem;color:#555;">大会結果・審査結果・稽古記録などを項目ごとに削除できます。削除前にシステム全体のバックアップを自動作成します。アカウント・DM履歴・操作履歴は対象外です。</p>
+                <div class="form-group"><label>削除するデータ</label><select id="maker-delete-dataset">
+                    <option value="system_tournaments">大会結果</option>
+                    <option value="system_exams">審査結果・審査記録</option>
+                    <option value="system_practices">稽古記録</option>
+                    <option value="system_attendance">出欠連絡</option>
+                    <option value="system_schedule_events">大会・稽古などの予定</option>
+                    <option value="system_yearly_plans">年間予定</option>
+                    <option value="system_meetings">会議記録</option>
+                    <option value="system_handover_docs">引き継ぎ資料</option>
+                    <option value="system_toinkai_docs">桐蔭会原稿</option>
+                    <option value="system_accounting_docs">会計書類</option>
+                    <option value="system_monthly_reports">月次出席レポート</option>
+                    <option value="system_group_dms">グループDM履歴</option>
+                </select></div>
+                <button type="button" class="btn-primary" style="width:100%;background:#c62828;" onclick="creatorDeleteSelectedDataset()">選択したデータを削除</button>
+                <p id="maker-delete-dataset-status" style="font-size:0.75rem;color:#666;"></p>
+            </div>
+            <div class="dev-section maker-box" style="border-color:#6a1b9a;background:#faf5ff;">
+                <h3 style="color:#6a1b9a;">💬 全員のDM履歴</h3>
+                <p style="font-size:0.8rem;color:#555;">作成者のみ閲覧できます。部員同士の個別DMと三役グループDMを含む、保存済みメッセージを新しい順に表示します。</p>
+                <button type="button" class="btn-primary" style="width:100%;background:#6a1b9a;" onclick="loadCreatorAllDmHistory()">全員のDM履歴を読み込む</button>
+                <input id="maker-dm-history-filter" type="text" placeholder="送信者・宛先・本文で検索" oninput="renderCreatorAllDmHistory()" style="width:100%;margin-top:8px;box-sizing:border-box;">
+                <div id="maker-all-dm-history" style="margin-top:10px;max-height:420px;overflow:auto;background:#fff;padding:8px;border:1px solid #ddd;border-radius:6px;"></div>
+            </div>
+            <div class="dev-section maker-box" style="border-color:#00897b; background:#f2fbf9;">
+                <h3 style="color:#00897b;">💾 システムバックアップ・復元</h3>
+                <p style="font-size:0.8rem;color:#555;">毎日午前3時ごろにGoogle Driveへ自動保存します。手動保存も可能です。復元前には現在の状態も自動保存します。</p>
+                <button type="button" class="btn-primary" style="width:100%;background:#00897b;" onclick="createSystemBackupNow()">今すぐバックアップを作成</button>
+                <button type="button" class="btn-primary" style="width:100%;margin-top:6px;background:#455a64;" onclick="loadSystemBackupList()">バックアップ一覧を更新</button>
+                <div id="system-backup-list" style="margin-top:10px;"></div>
+            </div>
 
             <!-- ① 顧問ツール全機能エリア -->
             <div class="dev-section advisor-box" style="border-color:#28a745; background:#f4fff4;">
@@ -667,7 +788,7 @@
             <!-- 部員の個別進級・卒業 -->
             <div class="dev-section" style="border-color:#28a745; background:#f4fff4;">
                 <h3 style="color:#28a745;">🎓 部員の個別進級・卒業（1人ずつ処理）</h3>
-                <p style="font-size:0.8rem; color:#555;">年度を切り替えても自動では進級しません。ここで部員ごとに進級・卒業を設定してください（同じ年度に二重進級しないよう記録されます）。</p>
+                <p style="font-size:0.8rem; color:#555;">毎年4月1日以降に自動進級します。個別の修正や、未処理分の手動処理が必要な場合はここから操作してください（同じ年度に二重進級しないよう記録されます）。</p>
                 <div id="promotion-manager-list"></div>
                 <div class="form-group" style="margin-top:8px;">
                     <label style="color:#28a745; font-weight:bold;">🔒 個人情報（学年）変更の認証キー（conoscenza.790）</label>
@@ -678,12 +799,13 @@
 
             <!-- ③ 誤投稿・全資料の削除管理 -->
             <div class="dev-section" style="border-color:#d9534f; background:#fff8f8;">
-                <h3 style="color:#d9534f;">📄 桐蔭会原稿・三役引継ぎ資料の完全削除管理</h3>
+                <h3 style="color:#d9534f;">📄 桐蔭会原稿・三役引継ぎ資料・稽古状況の削除管理</h3>
                 <div class="form-group">
                     <label>削除対象データ種別</label>
                     <select id="dev-delete-doc-type" onchange="populateDevDeleteDocSelect()">
                         <option value="toinkai">桐蔭会雑誌原稿</option>
                         <option value="handover">三役引き継ぎ資料</option>
+                        <option value="practices">稽古状況・稽古日誌</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -1088,9 +1210,13 @@
                 <h1>稽古状況</h1>
                 <div class="form-block">
                     <h3>⚔️ 稽古日誌の追加</h3>
-                    <div class="form-group"><label>日付</label><input type="date" id="practice-date"></div>
+                    <div class="form-group"><label>日付</label><input type="date" id="practice-date" onchange="onPracticeDateChanged()"></div>
                     <div class="form-group">
-                        <label>👥 本日来た部員を選択（ドロップダウン・連絡ありは自動表示）</label>
+                        <label>👥 本日来た部員を選択</label>
+                        <p style="font-size:0.75rem; color:#666; margin:0 0 6px;">
+                            その日に<strong>欠席連絡が入っている部員</strong>と、<strong>夏休み以降の3年生</strong>は一覧に出ません（自動オフの日は全員非表示）。
+                        </p>
+                        <div id="practice-attendance-excluded" style="font-size:0.75rem; color:#b71c1c; margin-bottom:6px;"></div>
                         <div id="practice-attendance-checklist" class="member-checkbox-list"></div>
                     </div>
 
@@ -2076,6 +2202,7 @@
             return [
                 { year: y, label: '夏休み', startDate: y + '-07-10', endDate: y + '-08-31', auto: true },
                 { year: y, label: '冬休み', startDate: y + '-12-26', endDate: (y + 1) + '-01-07', auto: true },
+                { year: y, label: '秋休み', startDate: '', endDate: '', auto: false },
                 { year: y, label: '春休み', startDate: (y + 1) + '-03-25', endDate: (y + 1) + '-04-07', auto: true }
             ];
         }
@@ -2120,6 +2247,7 @@
                 + '<button type="button" class="submit-btn" style="width:auto; padding:6px 12px; font-size:0.8rem;" onclick="saveVacationPeriodsFromUI()">この期間で保存</button>'
                 + '</div>';
             slots.forEach(s => { s.innerHTML = html; });
+            try { renderAutoOffEditor(); } catch (e) {}
         }
 
         window.saveVacationPeriodsFromUI = function () {
@@ -2332,7 +2460,11 @@
             if (!container) return;
 
             VALID_ACCOUNTS = getSavedAccounts();
+            // 3年生だけテストが早い日は「3年生のみオフ」＝チェックリストから外す
+            const pracDateEl = document.getElementById('practice-date');
+            const pracAoff = (typeof autoOffOn === 'function' && pracDateEl && pracDateEl.value) ? autoOffOn(pracDateEl.value) : { off: false, off3: false };
             const members = VALID_ACCOUNTS.filter(a => !a.isAdvisor && a.grade !== '卒業' && !isRetiredAccount(a))
+                .filter(a => !(pracAoff.off3 && isThirdGrade_(a.grade)))
                 .sort((x, y) => gradeNumber_(y.grade) - gradeNumber_(x.grade)
                     || String(x.class || '').localeCompare(String(y.class || ''), 'ja')
                     || String(x.name || '').localeCompare(String(y.name || ''), 'ja'));
@@ -3826,7 +3958,7 @@ ${senderUser.name} 様
         }
         function saveScheduledDMs(items) {
             try { localStorage.setItem('system_scheduled_dm', JSON.stringify(items)); } catch (e) {}
-            try { if (gasToken()) gasRun('apiSaveData', gasToken(), 'system_scheduled_dm', JSON.stringify(items)).catch(() => {}); } catch (e) {}
+            try { if (gasToken()) gasRun('apiSaveData', 'system_scheduled_dm', JSON.stringify(items), gasToken(), GAS_REVS['system_scheduled_dm'] || 0).catch(() => {}); } catch (e) {}
         }
         function broadcastOfficialMessage_(content, opts) {
             opts = opts || {};
@@ -4079,7 +4211,7 @@ ${senderUser.name} 様
             } else if (latest.dataUrl) {
                 const type = latest.fileType || '';
                 previewHtml = type.indexOf('image/') === 0
-                    ? `<img src="${latest.dataUrl}" style="max-width:100%; border-radius:4px;">`
+                    ? `<img src="${latest.dataUrl}" style="display:block; width:100%; max-height:420px; object-fit:contain; border-radius:4px; background:#fafafa;">`
                     : `<iframe src="${latest.dataUrl}" style="width:100%; height:300px; border:none;"></iframe>`;
             } else {
                 previewHtml = '<p style="font-size:0.85rem; color:#d9534f;">ファイルを読み込めませんでした。再アップロードしてください。</p>';
@@ -4408,10 +4540,16 @@ ${senderUser.name} 様
                 docs.forEach(d => {
                     html += `<option value="${d.id}">${d.title} (${d.year}年度 / ${d.fileName})</option>`;
                 });
-            } else {
+            } else if (type === 'handover') {
                 const docs = getHandoverDocs();
                 docs.forEach(d => {
                     html += `<option value="${d.id}">${d.title} (${d.year}年度 / 投稿者:${d.uploadedBy})</option>`;
+                });
+            } else if (type === 'practices') {
+                let practices = [];
+                try { practices = JSON.parse(localStorage.getItem('system_practices') || '[]'); } catch (e) {}
+                practices.forEach(d => {
+                    html += `<option value="${String(d.id)}">${escapeHTML(String(d.date || '日付不明'))} / 出席 ${Array.isArray(d.attendedMembers) ? d.attendedMembers.length : 0}名</option>`;
                 });
             }
             itemSelect.innerHTML = html;
@@ -4431,20 +4569,28 @@ ${senderUser.name} 様
 
             if (!docId) return alert("削除する項目を選択してください。");
 
-            if (!confirm("🛠 【作成者全能権限】選択した資料データを即時削除しますか？")) return;
+            if (!confirm("🛠 【作成者全能権限】選択したデータを即時削除しますか？")) return;
 
             if (type === 'toinkai') {
                 let docs = getToinkaiDocs();
-                docs = docs.filter(d => d.id !== docId);
+                docs = docs.filter(d => String(d.id) !== String(docId));
                 saveToinkaiDocs(docs);
                 renderToinkaiDocs();
-            } else {
+            } else if (type === 'handover') {
                 let docs = getHandoverDocs();
-                docs = docs.filter(d => d.id !== docId);
+                docs = docs.filter(d => String(d.id) !== String(docId));
                 saveHandoverDocs(docs);
+            } else if (type === 'practices') {
+                let practices = [];
+                try { practices = JSON.parse(localStorage.getItem('system_practices') || '[]'); } catch (e) {}
+                const before = practices.length;
+                practices = practices.filter(d => String(d.id) !== String(docId));
+                if (practices.length === before) return alert('対象の稽古記録が見つかりません。最新データに同期してから再度お試しください。');
+                localStorage.setItem('system_practices', JSON.stringify(practices));
+                renderPracticeHistory();
             }
 
-            alert("🗑 【作成者全能権限】資料データを即時削除しました！");
+            alert("🗑 【作成者全能権限】選択したデータを削除しました！");
             populateDevDeleteDocSelect();
         }
 
@@ -4588,24 +4734,13 @@ ${senderUser.name} 様
         function attendanceDeadlineNote() {
             const el = document.getElementById('attend-deadline-note');
             if (!el) return;
-            const now = new Date();
-            const dow = now.getDay();
-            const key = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-            const satEvent = getScheduleEvents().some(x => x && x.startDate === key && (x.type === 'saturday' || x.type === 'tournament'));
-            const isTarget = (dow === 2 || dow === 5 || dow === 6);
-            el.textContent = isTarget
-                ? '本日は通常稽古日／土曜活動日です。出欠連絡は当日 9:00 まで受け付けます。'
-                : '出欠連絡は随時受け付けています。';
+            el.textContent = '出欠連絡は当日 8:00 まで受け付けます。8:00以降は顧問または主将へ直接ご連絡ください。';
         }
 
         function isAttendanceClosed(now) {
             const d = now || new Date();
-            const dow = d.getDay();
-            const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-            const satEvent = getScheduleEvents().some(x => x && x.startDate === key && (x.type === 'saturday' || x.type === 'tournament'));
-            const isTarget = (dow === 2 || dow === 5 || dow === 6 || satEvent);
-            if (!isTarget) return false;
-            return (d.getHours() * 60 + d.getMinutes()) > 9 * 60;
+            const minutes = d.getHours() * 60 + d.getMinutes();
+            return minutes >= 8 * 60;
         }
 
         function renderEarlyLeaveSummary() {
@@ -4734,7 +4869,7 @@ function attendanceDateKeyOf_(d) {
             const dateKey = dateSel && dateSel.value ? String(dateSel.value) : attendanceDateKeyOf_(new Date());
             if (!dateKey) return alert("稽古日を選択してください。");
             if (dateKey === attendanceDateKeyOf_(new Date()) && isAttendanceClosed(new Date())) {
-                return alert('本日の出欠連絡は 9:00 で締め切りました。\n以降は顧問または主将へ直接ご連絡ください。');
+                return alert('本日の出欠連絡は 8:00 で締め切りました。\n以降は顧問または主将へ直接ご連絡ください。');
             }
 
             const name = nameEl.value;
@@ -4783,6 +4918,8 @@ function attendanceDateKeyOf_(d) {
                 const trimmed = {};
                 sorted.forEach(e => { trimmed[e[0]] = e[1]; });
                 localStorage.setItem('club_seen_notices', JSON.stringify(trimmed));
+                const serverIds = (keys || []).filter(k => String(k).indexOf('msg_') === 0);
+                if (serverIds.length && gasAvailable() && gasToken()) gasRun('apiMarkNoticesRead', gasToken(), JSON.stringify(serverIds)).catch(e => console.warn('既読記録に失敗:', e));
             } catch (e) {}
         }
         function noticeKey(m) {
@@ -4801,7 +4938,7 @@ function attendanceDateKeyOf_(d) {
         }
         function saveDmWarnings(list) {
             try { localStorage.setItem('system_dm_warnings', JSON.stringify(list)); } catch (e) {}
-            try { if (gasToken()) gasRun('apiSaveData', gasToken(), 'system_dm_warnings', JSON.stringify(list)).catch(function () {}); } catch (e) {}
+            try { if (gasToken()) gasRun('apiSaveData', 'system_dm_warnings', JSON.stringify(list), gasToken(), GAS_REVS['system_dm_warnings'] || 0).catch(function () {}); } catch (e) {}
         }
         function recordDmWarning(userId, reason, snippet) {
             if (!userId) return;
@@ -4907,7 +5044,6 @@ function attendanceDateKeyOf_(d) {
                 + '</div>';
         }
         window.renderDmWarningStatus = renderDmWarningStatus;
-
         function populateDevWarnUserSelect() {
             const sel = document.getElementById('dev-warn-user-select');
             if (!sel) return;
@@ -4952,6 +5088,7 @@ function attendanceDateKeyOf_(d) {
             alert('⚠️ 公式警告を送信しました。');
         }
         window.sendOfficialWarningByMaker = sendOfficialWarningByMaker;
+
 
         function renderHomeNotices() {
             const container = document.getElementById('home-notices-list');
@@ -5125,9 +5262,17 @@ function attendanceDateKeyOf_(d) {
                 }
 
                 const vacPeriod = vacationOn(dateStr);
+                // 年度予定から自動判定した「通常稽古オフ」（テスト・学芸発表会・運動会の1週間前など）
+                const aoNow = (typeof autoOffOn === 'function') ? autoOffOn(dateStr) : { off: false, off3: false, labels: [] };
+                if (aoNow.off) isOff = true;
                 const inVacation = !!vacPeriod || dayEvents.some(e => e.type === 'vacation-off' || e.type === 'vacation-work');
                 if (vacPeriod) {
                     tagsHtml += `<span style="display:inline-block; background:#e8f5e9; color:#2e7d32; border:1px solid #81c784; border-radius:3px; padding:1px 3px; font-size:0.6rem; margin:1px 0;">${vacPeriod.label}（顧問登録）</span>`;
+                }
+                if (aoNow.off) {
+                    tagsHtml += `<span class="off-tag">自動OFF: ${escapeHTML(aoNow.labels.join('／'))}</span>`;
+                } else if (aoNow.off3) {
+                    tagsHtml += `<span style="display:inline-block; background:#fff3e0; color:#e65100; border:1px solid #ffb74d; border-radius:3px; padding:1px 3px; font-size:0.6rem; margin:1px 0; line-height:1.3;">3年生のみOFF: ${escapeHTML(aoNow.labels.join('／'))}</span>`;
                 }
                 if (isPracticeDay && !isOff && !inVacation) {
                     tagsHtml += `<span class="practice-tag">通常稽古日</span>`;
@@ -5272,6 +5417,9 @@ function attendanceDateKeyOf_(d) {
                 return;
             }
 
+            // DMの追加認証は撤廃。通常ログインのみで利用可能にする。
+            if (id === 'dm') isDmUnlocked = true;
+
             const sections = document.querySelectorAll('.section');
             sections.forEach(s => s.classList.remove('active'));
 
@@ -5286,13 +5434,12 @@ function attendanceDateKeyOf_(d) {
             }
 
             window.scrollTo(0, 0);
-            if (!currentUser && (id === 'tournament' || id === 'exam')) { try { loadPublicResultsForGuest(false); } catch (e) {} }
         }
 
         function openSecondaryAuthModal(target) {
             pendingTargetSection = target;
             const titleMap = {
-                'toinkai': '🔒 「桐蔭会雑誌原稿」二次認証'
+                'toinkai': '🔒 「桐蔭会雑誌原稿」二次認証',
             };
             const titleEl = document.getElementById('secondary-auth-title');
             const passEl = document.getElementById('secondary-auth-pass');
@@ -5744,6 +5891,28 @@ function attendanceDateKeyOf_(d) {
             } catch (e) { alert('変更に失敗しました: ' + (e.message || e)); }
         };
 
+        window.loadAttendanceSummary = async function (role) {
+            const box=document.getElementById(role==='advisor'?'advisor-attendance-summary-list':'attendance-summary-list'); if(!box)return;
+            box.innerHTML='<p>集計中...</p>';
+            try {
+                const res=await gasRun('apiGetAttendanceSummary',gasToken()); if(!res||!res.ok)throw new Error('取得できませんでした');
+                let html='<p><strong>稽古記録 '+res.practiceCount+'回／対象部員 '+res.members.length+'人／平均出席率 '+res.averageRate+'%</strong></p><table class="user-manage-table"><thead><tr><th>部員</th><th>学年</th><th>出席</th><th>連絡欠席</th><th>欠席</th><th>出席率</th></tr></thead><tbody>';
+                res.members.forEach(m=>{html+='<tr><td>'+escapeHTML(m.name)+'</td><td>'+escapeHTML(m.grade)+'</td><td>'+m.attended+'/'+m.total+'</td><td>'+m.excused+'</td><td>'+m.absent+'</td><td><strong>'+m.rate+'%</strong></td></tr>';});
+                box.innerHTML=html+'</tbody></table>';
+            } catch(e){box.innerHTML='<p style="color:#c00;">'+escapeHTML(e.message||String(e))+'</p>';}
+        };
+        window.loadNoticeReadStatus = async function (role) {
+            const box=document.getElementById(role==='advisor'?'advisor-notice-read-status-list':'notice-read-status-list'); if(!box)return; box.innerHTML='<p>読み込み中...</p>';
+            try {
+                const res=await gasRun('apiListNoticeReadStatus',gasToken(),50); if(!res||!res.ok)throw new Error('取得できませんでした');
+                if(!res.notices.length){box.innerHTML='<p>全体向け公式お知らせはまだありません。</p>';return;}
+                box.innerHTML=res.notices.map(n=>'<div style="border:1px solid #ddd;border-radius:6px;padding:8px;margin-bottom:8px;background:#fff;"><strong>'+escapeHTML(n.title)+'</strong><div style="font-size:.75rem;color:#666;">'+escapeHTML(n.date)+'　既読 '+n.readCount+'/'+n.total+'人</div><div style="font-size:.8rem;white-space:pre-wrap;margin-top:5px;">'+escapeHTML(n.content)+'</div><details style="margin-top:5px;"><summary>未読 '+n.unread.length+'人を表示</summary><p style="font-size:.8rem;">'+(n.unread.map(x=>escapeHTML(x.name)).join('、')||'未読者はいません')+'</p></details></div>').join('');
+            } catch(e){box.innerHTML='<p style="color:#c00;">'+escapeHTML(e.message||String(e))+'</p>';}
+        };
+        function parseRosterUpdateCsv(text){return String(text||'').split(/\r?\n/).filter(x=>x.trim()).map((line,i)=>{const c=line.split(',').map(x=>x.trim().replace(/^"|"$/g,''));if(i===0&&/^(ID|部員ID)$/i.test(c[0]))return null;return {id:c[0],grade:c[1],class:c[2],status:c[3]};}).filter(x=>x&&x.id);}
+        window.previewRosterBulkUpdate=function(){const ta=document.getElementById('roster-update-csv'),box=document.getElementById('roster-update-preview');if(!ta||!box)return;const rows=parseRosterUpdateCsv(ta.value);window.__rosterUpdateRows=rows;box.innerHTML=rows.length?'<p><strong>'+rows.length+'件</strong>の更新候補</p><pre style="white-space:pre-wrap;font-size:.75rem;">'+escapeHTML(JSON.stringify(rows.slice(0,20),null,2))+'</pre>':'<p>有効なID行がありません。</p>';};
+        window.applyRosterBulkUpdate=async function(){const rows=window.__rosterUpdateRows||[];if(!rows.length)return alert('先に更新内容を確認してください。');if(!confirm(rows.length+'件の部員情報を更新します。パスワード・DM・出欠・稽古記録は変更しません。よろしいですか？'))return;try{const res=await gasRun('apiBulkUpdateAccounts',gasToken(),JSON.stringify(rows));await syncFromGAS(false);renderMakerRosterAndPassList();if(typeof renderDevUserInfoList==='function')renderDevUserInfoList();alert(res.updated.length+'件を更新しました。\nスキップ: '+res.skipped.length+'件');}catch(e){alert('一括更新に失敗しました: '+(e.message||e));}};
+
         window.loadAuditLog = async function () {
             const box = document.getElementById('audit-log-list');
             if (!box) return;
@@ -5884,6 +6053,136 @@ function attendanceDateKeyOf_(d) {
             saveCsvFile('名簿_' + new Date().toISOString().slice(0, 10) + '.csv', rows);
         };
 
+        async function creatorDeleteSelectedDataset() {
+            const sel = document.getElementById('maker-delete-dataset');
+            const key = sel ? String(sel.value || '') : '';
+            const label = sel && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : key;
+            if (!key) return alert('削除対象を選択してください。');
+            if (!confirm('「' + label + '」をすべて削除します。\n削除前に全体バックアップを自動作成します。\nこの操作を実行しますか？')) return;
+            if (!confirm('最終確認：' + label + 'の保存データを空にします。よろしいですか？')) return;
+            const status = document.getElementById('maker-delete-dataset-status');
+            if (status) status.textContent = 'バックアップ作成・削除処理中…';
+            try {
+                const res = await gasRun('apiCreatorClearDataset', gasToken(), key);
+                if (res && res.ok) {
+                    try { localStorage.setItem(key, '[]'); } catch (e) {}
+                    try { await syncFromGAS(false); } catch (e) {}
+                    if (status) status.textContent = '削除完了：' + label + ' / 退避バックアップ：' + (res.backupName || '作成済み');
+                    alert(label + 'を削除しました。削除前のバックアップも作成済みです。');
+                } else throw new Error((res && res.message) || '削除できませんでした。');
+            } catch (e) {
+                if (status) status.textContent = '削除失敗：' + ((e && e.message) || e);
+                alert('削除に失敗しました：' + ((e && e.message) || e));
+            }
+        }
+
+        window.__creatorDmHistoryEntries = [];
+        async function loadCreatorAllDmHistory() {
+            const el = document.getElementById('maker-all-dm-history');
+            if (el) el.innerHTML = '<p style="color:#777;">DM履歴を読み込み中…</p>';
+            try {
+                const res = await gasRun('apiGetCreatorDmHistory', gasToken(), 2000);
+                window.__creatorDmHistoryEntries = (res && res.entries) || [];
+                renderCreatorAllDmHistory();
+                if (el) {
+                    const count = document.createElement('p');
+                    count.style.cssText = 'font-size:0.72rem;color:#777;margin:4px 0;';
+                    count.textContent = '保存件数：' + ((res && res.total) || 0) + '件（表示上限：2000件）';
+                    el.prepend(count);
+                }
+            } catch (e) {
+                if (el) el.innerHTML = '<p style="color:#c00;">取得できませんでした：' + escapeHTML((e && e.message) || e) + '</p>';
+            }
+        }
+        function renderCreatorAllDmHistory() {
+            const el = document.getElementById('maker-all-dm-history');
+            if (!el) return;
+            const q = String(document.getElementById('maker-dm-history-filter')?.value || '').trim().toLowerCase();
+            const entries = window.__creatorDmHistoryEntries || [];
+            const filtered = entries.filter(m => !q || [m.date,m.senderName,m.senderId,m.receiverName,m.receiverId,m.content].join(' ').toLowerCase().includes(q));
+            if (!filtered.length) {
+                el.innerHTML = '<p style="font-size:0.8rem;color:#888;">該当するDM履歴はありません。読み込みボタンを押して最新情報を取得してください。</p>';
+                return;
+            }
+            el.innerHTML = '<p style="font-size:0.72rem;color:#777;">表示：' + filtered.length + '件</p>' + filtered.map(m =>
+                '<div style="border-bottom:1px solid #eee;padding:8px 2px;font-size:0.78rem;">' +
+                '<strong>' + escapeHTML(m.date || '日時不明') + '</strong><br>' +
+                '<span>送信：' + escapeHTML(m.senderName || '不明') + '（' + escapeHTML(m.senderId || '') + '） → 宛先：' + escapeHTML(m.receiverName || '不明') + '（' + escapeHTML(m.receiverId || '') + '）</span>' +
+                (m.isOfficial ? ' <span style="color:#1565c0;">[公式]</span>' : '') + (m.isGroup ? ' <span style="color:#6a1b9a;">[グループ]</span>' : '') +
+                '<div style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:4px;">' + escapeHTML(m.content || '') + '</div>' +
+                (m.attachName ? '<div style="color:#666;margin-top:3px;">📎 ' + escapeHTML(m.attachName) + '</div>' : '') +
+                '</div>'
+            ).join('');
+        }
+
+        function populateAuditMemberSelectors() {
+            let accounts = [];
+            try { accounts = getSavedAccounts() || []; } catch (e) {}
+            ['maker-audit-member-select','advisor-audit-member-select'].forEach(function(id) {
+                const sel = document.getElementById(id); if (!sel) return;
+                const keep = sel.value;
+                sel.innerHTML = '<option value="">全員の履歴</option>' + accounts
+                    .filter(a => a && !a.isMaker)
+                    .sort((a,b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'))
+                    .map(a => '<option value="' + escapeHTML(String(a.id || '')) + '">' + escapeHTML(String(a.name || '名前未設定')) + (a.isAdvisor ? '（顧問）' : '') + '</option>').join('');
+                if (keep) sel.value = keep;
+            });
+        }
+
+        function loadSystemAuditLog(source) {
+            const token = gasToken();
+            if (!token || !gasAvailable()) return alert('ログイン状態を確認してください。');
+            populateAuditMemberSelectors();
+            const selectorId = source === 'advisor' ? 'advisor-audit-member-select' : 'maker-audit-member-select';
+            const selected = document.getElementById(selectorId);
+            const actorId = selected ? String(selected.value || '') : '';
+            google.script.run.withSuccessHandler(res => {
+                const html = !res || !res.entries || !res.entries.length
+                    ? '<p style="color:#888;">該当する操作履歴はありません。</p>'
+                    : res.entries.map(x => `<div style="border-bottom:1px solid #eee;padding:6px 2px;font-size:0.78rem;"><strong>${escapeHTML(x.at || '')} / ${escapeHTML(x.actorName || '不明')}（ID:${escapeHTML(x.actorId || '')}）</strong><br>${escapeHTML(x.action || '')}：${escapeHTML(x.target || '')}<br><span style="color:#666;">${escapeHTML(x.detail || '')}</span></div>`).join('');
+                const targetId = source === 'advisor' ? 'advisor-system-audit-log-list' : 'system-audit-log-list';
+                const el = document.getElementById(targetId); if (el) el.innerHTML = html;
+            }).withFailureHandler(err => alert('操作履歴を取得できませんでした：' + ((err && err.message) || err))).apiListAuditLog(token, 800, actorId);
+        }
+        function createSystemBackupNow() {
+            if (!confirm('現在のシステムデータをGoogle Driveへバックアップします。よろしいですか？')) return;
+            google.script.run.withSuccessHandler(res => { alert('バックアップを作成しました：' + res.name); loadSystemBackupList(); }).withFailureHandler(err => alert('バックアップに失敗しました：' + ((err && err.message) || err))).apiCreateClubBackup(gasToken());
+        }
+        function loadSystemBackupList() {
+            google.script.run.withSuccessHandler(res => {
+                const el=document.getElementById('system-backup-list'); if(!el) return;
+                const list=(res && res.backups) || [];
+                el.innerHTML = list.length ? list.map(b => `<div style="border-bottom:1px solid #ddd;padding:7px 0;font-size:0.8rem;"><strong>${escapeHTML(b.createdAt)}</strong><br>${escapeHTML(b.name)}<br><button type="button" class="btn-primary" style="margin-top:4px;background:#d9534f;" onclick="restoreSystemBackup('${String(b.id).replace(/[^a-zA-Z0-9_-]/g,'')}','${escapeHTML(b.name).replace(/'/g,'&#39;')}')">このバックアップから復元</button></div>`).join('') : '<p style="color:#888;">バックアップはまだありません。</p>';
+            }).withFailureHandler(err => alert('一覧取得に失敗しました：' + ((err && err.message) || err))).apiListClubBackups(gasToken());
+        }
+        function restoreSystemBackup(id, name) {
+            if (!confirm('「' + name + '」からデータを復元します。現在のデータは復元直前に別バックアップとして保存されます。続行しますか？')) return;
+            google.script.run.withSuccessHandler(res => { alert(res.message || '復元しました。ページを再読み込みしてください。'); location.reload(); }).withFailureHandler(err => alert('復元に失敗しました：' + ((err && err.message) || err))).apiRestoreClubBackup(gasToken(), id);
+        }
+
+        window.loadAccessExceptionSettings = function(source) {
+            const el = document.getElementById('access-exception-input-' + (source || 'maker')); if (!el) return;
+            google.script.run.withSuccessHandler(res => {
+                const items = (res && res.items) || [];
+                el.value = items.map(x => x.date ? [x.date,x.label || ''].join(',') : [x.start,x.end,x.label || ''].join(',')).join('\n');
+                if (!items.length) el.value = '';
+            }).withFailureHandler(err => alert('設定を読み込めませんでした：' + ((err && err.message) || err))).apiGetAccessExceptions(gasToken());
+        };
+        window.saveAccessExceptionSettings = function(source) {
+            const el = document.getElementById('access-exception-input-' + (source || 'maker')); if (!el) return;
+            const rows = el.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+            const items = [];
+            for (const row of rows) {
+                const p = row.split(',').map(x => x.trim());
+                if (p.length === 2) items.push({date:p[0],label:p[1]});
+                else if (p.length >= 3) items.push({start:p[0],end:p[1],label:p.slice(2).join(',')});
+                else { alert('入力形式が正しくありません：' + row); return; }
+            }
+            google.script.run.withSuccessHandler(res => { alert('特別日設定を保存しました（' + ((res && res.items) || []).length + '件）。'); })
+                .withFailureHandler(err => alert('保存できませんでした：' + ((err && err.message) || err)))
+                .apiSaveAccessExceptions(gasToken(), JSON.stringify(items));
+        };
+
         function openAdminAuthModal(type) { return openAdminToolDirect(type); }
         function openAdminToolDirect(type) {
             if (!currentUser || !gasToken()) return alert('先に部員ID・パスワードでログインしてください。');
@@ -5927,6 +6226,7 @@ function attendanceDateKeyOf_(d) {
                 renderDevUserInfoList();
                 renderDevToolData();
                 renderDevManualManager();
+                populateOfficialMemberSelect();
                 const el = document.getElementById('dev-tool-overlay');
                 if (el) el.style.display = 'flex';
             }
@@ -5997,9 +6297,11 @@ function attendanceDateKeyOf_(d) {
          * 運営（作成者）→ 個人への個別連絡
          * ============================================================ */
         function populateOfficialMemberSelect() {
-            const sel = document.getElementById('dm-official-member-select');
-            if (!sel) return;
-            const keep = sel.value;
+            const selects = [
+                document.getElementById('dm-official-member-select'),
+                document.getElementById('maker-official-member-select')
+            ].filter(Boolean);
+            if (!selects.length) return;
             const accounts = (getSavedAccounts() || []).filter(function (a) {
                 return a && !a.isMaker && String(a.grade || '') !== '卒業' && !isRetiredAccount(a);
             }).sort(function (x, y) {
@@ -6007,27 +6309,31 @@ function attendanceDateKeyOf_(d) {
                     || gradeNumber_(y.grade) - gradeNumber_(x.grade)
                     || String(x.name || '').localeCompare(String(y.name || ''), 'ja');
             });
-            let html = '<option value="">-- 送信先を選択 --</option>';
-            accounts.forEach(function (a) {
-                const label = (a.isAdvisor ? '顧問' : (a.grade ? a.grade + '年' : '-')) + ' / '
-                    + (a.class && !a.isAdvisor ? a.class + ' / ' : '') + String(a.name || '');
-                html += '<option value="' + escapeHTML(String(a.id)) + '">' + escapeHTML(label) + '</option>';
+            selects.forEach(function (sel) {
+                const keep = sel.value;
+                let options = '<option value="">-- 送信先を選択 --</option>';
+                accounts.forEach(function (a) {
+                    const label = (a.isAdvisor ? '顧問' : (a.grade ? a.grade + '年' : '-')) + ' / '
+                        + (a.class && !a.isAdvisor ? a.class + ' / ' : '') + String(a.name || '');
+                    options += '<option value="' + escapeHTML(String(a.id)) + '">' + escapeHTML(label) + '</option>';
+                });
+                sel.innerHTML = options;
+                if (keep) sel.value = keep;
             });
-            sel.innerHTML = html;
-            if (keep) sel.value = keep;
         }
 
-        async function sendOfficialMessageToMember() {
+        async function sendOfficialMessageToMember(source) {
             if (!currentUser) return alert('ログインしてください。');
             const isMakerUser = !!(currentUser.isMaker || currentUser.role === '作成者');
             if (!isMakerUser) return alert('この機能は作成者専用です。');
-            if (!hasAdminToolAccess('maker-admin')) {
+            const requiredTool = source === 'maker' ? 'maker-dev' : 'maker-dev';
+            if (!hasAdminToolAccess(requiredTool)) {
                 alert('先に「作成者ツール」へログインしてください。');
                 openAdminAuthModal('maker-dev');
                 return;
             }
-            const sel = document.getElementById('dm-official-member-select');
-            const input = document.getElementById('dm-official-input');
+            const sel = document.getElementById(source === 'maker' ? 'maker-official-member-select' : 'dm-official-member-select');
+            const input = document.getElementById(source === 'maker' ? 'maker-official-input' : 'dm-official-input');
             const targetId = sel ? String(sel.value || '') : '';
             const content = input ? String(input.value || '').trim() : '';
             if (!targetId) return alert('送信先を選択してください。');
@@ -6316,7 +6622,7 @@ function attendanceDateKeyOf_(d) {
                             <div class="contact-card">
                                 <div class="c-header">差出人: ${escapeHTML(m.senderName)} (${escapeHTML(m.date)})</div>
                                 <div style="white-space:pre-wrap;">${linkifyDmContent(m.content)}</div>
-                                ${(m.attachType && String(m.attachType).indexOf('image/') === 0 && m.attachFileId) ? `<div style="margin-top:8px;"><img data-dmfile="${escapeHTML(m.attachFileId)}" alt="${escapeHTML(m.attachName || '画像')}" style="max-width:100%; max-height:280px; border-radius:8px; cursor:zoom-in;" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '画像')}')"></div>` : ''}
+                                ${(m.attachType && String(m.attachType).indexOf('image/') === 0 && m.attachFileId) ? `<div style="margin-top:8px;"><img data-dmfile="${escapeHTML(m.attachFileId)}" alt="${escapeHTML(m.attachName || '画像')}" style="display:block; width:100%; height:220px; object-fit:contain; border-radius:8px; cursor:zoom-in; background:#f2f2f2;" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '画像')}')"></div>` : ''}
                                 ${m.attachFileId ? `<div style="margin-top:8px;"><button type="button" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '添付ファイル')}')">📎 ${escapeHTML(m.attachName || '添付ファイル')} を開く</button>${m.attachAiFlag ? '<span style="color:#d9534f; font-size:0.78rem; margin-left:6px;">AI警告あり</span>' : ''}</div>` : ''}
                                 ${m.attachmentType === 'application/pdf' && m.attachmentFileId ? `<div style="margin-top:8px;"><button type="button" onclick="openProtectedManual('${escapeHTML(m.attachmentFileId)}','${escapeHTML(m.attachmentName || 'manual.pdf')}')">📎 マニュアルPDFを開く（${escapeHTML(m.manualVersion || '')}）</button></div>` : (m.attachmentDataUrl && m.attachmentType === 'application/pdf' ? `<div style="margin-top:8px;"><a href="${m.attachmentDataUrl}" target="_blank" rel="noopener" download="${escapeHTML(m.attachmentName || 'manual.pdf')}">📎 マニュアルPDFを開く（${escapeHTML(m.manualVersion || '')}）</a></div>` : '')}
                             </div>
@@ -6509,7 +6815,7 @@ function attendanceDateKeyOf_(d) {
                     + `<div style="font-size:0.68rem; color:#888;">${escapeHTML(m.senderName || '')} ${escapeHTML(m.date || '')}</div>`
                     + `<div style="white-space:pre-wrap;">${linkifyDmContent(m.content)}</div>`
                     + (mine ? `<div style="font-size:0.66rem; color:#1976d2; text-align:right; margin-top:2px; min-height:0.9em;">${(Array.isArray(m.readBy) && m.readBy.map(String).indexOf(partner) >= 0) ? '開封済み' : ''}</div>` : '')
-                    + (isDmImageMsg(m) ? `<div style="margin-top:6px;"><img data-dmfile="${escapeHTML(m.attachFileId)}" alt="${escapeHTML(m.attachName || '画像')}" style="max-width:100%; max-height:280px; border-radius:8px; cursor:zoom-in;" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '画像')}')"></div>` : '')
+                    + (isDmImageMsg(m) ? `<div style="margin-top:6px;"><img data-dmfile="${escapeHTML(m.attachFileId)}" alt="${escapeHTML(m.attachName || '画像')}" style="display:block; width:100%; height:220px; object-fit:contain; border-radius:8px; cursor:zoom-in; background:#f2f2f2;" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '画像')}')"></div>` : '')
                     + (!isDmImageMsg(m) && m.attachFileId ? `<div style="margin-top:6px;"><button type="button" onclick="openDmAttachment('${escapeHTML(m.attachFileId)}','${escapeHTML(m.attachName || '添付ファイル')}')">📎 ${escapeHTML(m.attachName || '添付ファイル')} を開く</button></div>` : '')
                     + (m.attachmentType === 'application/pdf' && m.attachmentFileId ? `<div style="margin-top:6px;"><button type="button" onclick="openProtectedManual('${escapeHTML(m.attachmentFileId)}','${escapeHTML(m.attachmentName || 'manual.pdf')}')">📎 マニュアルPDFを開く（${escapeHTML(m.manualVersion || '')}）</button></div>` : '')
                     + `</div></div>`;
@@ -6655,7 +6961,6 @@ function attendanceDateKeyOf_(d) {
             renderHomeNotices();
             renderRosterList();
             if (!currentUser) loadPublicRosterForGuest(false);
-            if (!currentUser) loadPublicResultsForGuest(false);
             renderToinkaiDocs();
             renderYearlyPlanPreview();
             updateExamMemberDropdown();
@@ -7912,13 +8217,590 @@ function attendanceDateKeyOf_(d) {
         fillSanyiSelects();
         if (gasToken()) startPolling(6000);
         document.addEventListener('click', function () {
-          setTimeout(function () { fillSanyiSelects(); fillCallSelects(); refreshAdvisorBoxes(); }, 60);
+          setTimeout(function () { fillSanyiSelects(); fillCallSelects(); refreshAdvisorBoxes(); try { if (window.populateDevWarnUserSelect) window.populateDevWarnUserSelect(); } catch (e) {} }, 60);
         }, true);
       }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootAdminExtras); else bootAdminExtras();
     })();
     </script>
 
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092" integrity="sha512-UKNk8GbxkABxKcXYuLkO16EleLGUkcvJWtpSNmExE0Too3ZaFAxTscNWEc1OdAv5/BikHawapSCaiD2XCmp+Bw==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","spa":2}' crossorigin="anonymous"></script>
+
+    <script>
+    /* ================================================================
+     * Ver3 追加モジュール
+     *  1) 年度予定から自動で「通常稽古オフ」を判定
+     *  2) 会計（予算・決算・レシート）データの削除
+     *  3) PDF が開けない不具合の修正（ポップアップブロック回避のビューア）
+     *  4) 画像読み込みで勝手にスクロールが飛ぶ問題の修正
+     *  5) 休止時間（ダウンタイム）の開始・終了で自動リロード
+     * ================================================================ */
+
+    /* ---------- 1) 自動オフ設定 ---------- */
+    function getAutoOffRules() {
+        try { return JSON.parse(localStorage.getItem('system_auto_off_rules') || '[]'); } catch (e) { return []; }
+    }
+    function saveAutoOffRules(list) {
+        localStorage.setItem('system_auto_off_rules', JSON.stringify(list || []));
+    }
+    function dateAddDays_(key, n) {
+        const d = new Date(String(key) + 'T00:00:00');
+        if (isNaN(d.getTime())) return '';
+        d.setDate(d.getDate() + Number(n || 0));
+        return attendanceDateKeyOf_(d);
+    }
+    const AUTO_OFF_KIND_LABEL = { test: 'テスト', gakugei: '学芸発表会', undoukai: '運動会', other: 'その他' };
+
+    /**
+     * その日の自動オフ状態を返す
+     *  off  : 全員が通常稽古オフ
+     *  off3 : 3年生だけオフ（3年生のテストが早い場合）
+     */
+    function autoOffOn(dateStr) {
+        const key = String(dateStr || '');
+        const res = { off: false, off3: false, labels: [], reason: '' };
+        if (!key) return res;
+        (getAutoOffRules() || []).forEach(function (r) {
+            if (!r || !r.startDate) return;
+            const lead = (r.leadDays === '' || r.leadDays == null) ? 7 : Number(r.leadDays);
+            // 行事当日〜終了日
+            const eventEnd = r.endDate && r.endDate >= r.startDate ? r.endDate : r.startDate;
+            const offStart = dateAddDays_(r.startDate, -lead);
+            const offEnd = dateAddDays_(eventEnd, -1);
+            if (!offStart) return;
+            const inWindow = key >= offStart && key <= offEnd;   // 1週間前〜前日
+            const onEvent = key >= r.startDate && key <= eventEnd; // 行事当日
+            if (!inWindow && !onEvent) return;
+            const label = (AUTO_OFF_KIND_LABEL[r.kind] || r.title || '行事') + '前';
+            if (String(r.gradeScope || 'all') === '3') {
+                res.off3 = true;
+            } else {
+                res.off = true;
+            }
+            if (res.labels.indexOf(label) < 0) res.labels.push(label);
+        });
+        return res;
+    }
+    // その日が「3年生だけ来られない日」か
+    function isThirdGradeBlockedOn_(dateStr) {
+        const a = autoOffOn(dateStr);
+        return !!(a.off || a.off3);
+    }
+
+    window.renderAutoOffEditor = function () {
+        const slots = document.querySelectorAll('.autooff-editor-slot');
+        if (!slots.length) return;
+        const rules = getAutoOffRules();
+        let html = '<div style="border:1px solid #ffb74d; background:#fffaf2; border-radius:6px; padding:10px; margin-top:10px;">'
+            + '<div style="font-weight:bold; font-size:0.9rem; margin-bottom:4px;">⚙️ 年度予定から自動で通常稽古オフ（テスト・学芸発表会・運動会の1週間前／長期休み）</div>'
+            + '<p style="font-size:0.75rem; color:#666; margin:0 0 8px;">'
+            + '登録した行事日の<strong>指定日前〜前日まで</strong>を自動で「通常稽古オフ」にします（当日もオフ）。'
+            + '長期休み（春夏秋冬）は下の「長期休みの期間」で設定した期間がそのままオフになります。<br>'
+            + '3年生だけテストが早い場合は、対象を「3年生のみ」にして3年生のテスト日を登録してください。</p>'
+            + '<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:flex-end; margin-bottom:8px; font-size:0.78rem;">'
+            + '<label>種別<select id="ao-kind" style="font-size:0.75rem;"><option value="test">テスト</option><option value="gakugei">学芸発表会</option><option value="undoukai">運動会</option><option value="other">その他</option></select></label>'
+            + '<label>行事名<input type="text" id="ao-title" placeholder="例: 期末テスト" style="font-size:0.75rem; width:120px;"></label>'
+            + '<label>開始日<input type="date" id="ao-start" style="font-size:0.75rem;"></label>'
+            + '<label>終了日<input type="date" id="ao-end" style="font-size:0.75rem;"></label>'
+            + '<label>何日前から<input type="number" id="ao-lead" value="7" min="0" max="60" style="font-size:0.75rem; width:60px;"></label>'
+            + '<label>対象<select id="ao-scope" style="font-size:0.75rem;"><option value="all">全員</option><option value="3">3年生のみ</option></select></label>'
+            + '<button type="button" class="submit-btn" style="width:auto; padding:6px 12px; font-size:0.78rem;" onclick="addAutoOffRule()">＋ 追加</button>'
+            + '</div>';
+        if (!rules.length) {
+            html += '<p style="font-size:0.78rem; color:#888; margin:0;">まだ登録がありません。</p>';
+        } else {
+            html += '<div style="font-size:0.78rem;"><table style="width:100%; border-collapse:collapse;">'
+                + '<thead><tr style="background:#f5f5f5;"><th style="text-align:left; padding:4px;">種別</th><th style="text-align:left; padding:4px;">行事名</th>'
+                + '<th style="text-align:left; padding:4px;">期間</th><th style="text-align:left; padding:4px;">オフ開始</th>'
+                + '<th style="text-align:left; padding:4px;">対象</th><th style="padding:4px;"></th></tr></thead><tbody>';
+            rules.forEach(function (r) {
+                const lead = (r.leadDays == null || r.leadDays === '') ? 7 : Number(r.leadDays);
+                const offStart = dateAddDays_(r.startDate, -lead);
+                html += '<tr>'
+                    + '<td style="padding:4px; border-bottom:1px solid #eee;">' + escapeHTML(AUTO_OFF_KIND_LABEL[r.kind] || 'その他') + '</td>'
+                    + '<td style="padding:4px; border-bottom:1px solid #eee;">' + escapeHTML(r.title || '') + '</td>'
+                    + '<td style="padding:4px; border-bottom:1px solid #eee;">' + escapeHTML(r.startDate || '') + (r.endDate ? ' 〜 ' + escapeHTML(r.endDate) : '') + '</td>'
+                    + '<td style="padding:4px; border-bottom:1px solid #eee;">' + escapeHTML(offStart || '') + ' 〜</td>'
+                    + '<td style="padding:4px; border-bottom:1px solid #eee;">' + (String(r.gradeScope) === '3' ? '<strong style="color:#e65100;">3年生のみ</strong>' : '全員') + '</td>'
+                    + '<td style="padding:4px; border-bottom:1px solid #eee;"><button type="button" style="font-size:0.7rem;" onclick="deleteAutoOffRule(\'' + escapeHTML(String(r.id)) + '\')">削除</button></td>'
+                    + '</tr>';
+            });
+            html += '</tbody></table></div>';
+        }
+        html += '<div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">'
+            + '<button type="button" class="btn-primary" style="width:auto; padding:6px 12px; font-size:0.78rem; background:#e67e22;" onclick="extractAutoOffFromYearlyPlan()">📄 年度予定の画像から自動登録</button>'
+            + '<button type="button" class="btn-danger" style="width:auto; padding:6px 12px; font-size:0.78rem;" onclick="clearAutoOffRules()">全削除</button>'
+            + '</div></div>';
+        slots.forEach(function (s) { s.innerHTML = html; });
+    };
+
+    window.addAutoOffRule = function () {
+        const kind = (document.getElementById('ao-kind') || {}).value || 'test';
+        const titleEl = document.getElementById('ao-title');
+        const startEl = document.getElementById('ao-start');
+        const endEl = document.getElementById('ao-end');
+        const leadEl = document.getElementById('ao-lead');
+        const scopeEl = document.getElementById('ao-scope');
+        const start = startEl ? startEl.value : '';
+        if (!start) return alert('開始日（行事の日）を選択してください。');
+        const end = endEl && endEl.value ? endEl.value : '';
+        if (end && end < start) return alert('終了日は開始日以降にしてください。');
+        const leadRaw = leadEl ? leadEl.value : '7';
+        const lead = leadRaw === '' ? 7 : Number(leadRaw);
+        const rules = getAutoOffRules();
+        rules.push({
+            id: 'ao_' + Date.now(),
+            kind: kind,
+            title: (titleEl && titleEl.value.trim()) || (AUTO_OFF_KIND_LABEL[kind] + '前オフ'),
+            startDate: start,
+            endDate: end,
+            leadDays: isFinite(lead) ? lead : 7,
+            gradeScope: (scopeEl && scopeEl.value) || 'all',
+            createdAt: new Date().toLocaleString()
+        });
+        saveAutoOffRules(rules);
+        try { renderCalendar(); } catch (e) {}
+        try { populateAttendanceDateSelect(); } catch (e) {}
+        renderAutoOffEditor();
+    };
+    window.deleteAutoOffRule = function (id) {
+        if (!confirm('この自動オフ設定を削除しますか？')) return;
+        saveAutoOffRules(getAutoOffRules().filter(function (r) { return String(r.id) !== String(id); }));
+        try { renderCalendar(); } catch (e) {}
+        renderAutoOffEditor();
+    };
+    window.clearAutoOffRules = function () {
+        if (!confirm('自動オフ設定をすべて削除しますか？')) return;
+        saveAutoOffRules([]);
+        try { renderCalendar(); } catch (e) {}
+        renderAutoOffEditor();
+    };
+
+    /** 年度予定（画像/PDF）からテスト・学芸発表会・運動会を抽出して自動登録 */
+    window.extractAutoOffFromYearlyPlan = async function () {
+        if (!currentUser || !gasToken()) return alert('ログインしてください。');
+        const plans = (getYearlyPlans() || []).filter(function (p) { return String(p.year) === String(currentSelectedYear); });
+        const latest = plans[0];
+        if (!latest || !latest.driveFileId) return alert('この年度の年度予定（画像/PDF）が登録されていません。先に顧問ツールから年度予定をアップロードしてください。');
+        try {
+            showToast('年度予定を読み取っています…');
+            const f = await gasRun('getProtectedFile', latest.driveFileId, gasToken());
+            if (!f || !f.ok) throw new Error((f && f.message) || 'ファイルを取得できませんでした');
+            const res = await gasRun('apiExtractYearlyEvents', f.base64, f.fileName || '', f.mimeType || latest.fileType || '', currentSelectedYear, gasToken());
+            if (!res || !res.ok) throw new Error((res && res.message) || '読み取れませんでした');
+            const found = res.events || [];
+            if (!found.length) return alert('テスト・学芸発表会・運動会の日付を読み取れませんでした。手入力で登録してください。');
+            const rules = getAutoOffRules();
+            let added = 0;
+            found.forEach(function (ev) {
+                if (!ev || !ev.startDate) return;
+                const dup = rules.some(function (r) {
+                    return r && r.kind === ev.kind && String(r.startDate) === String(ev.startDate) && String(r.gradeScope || 'all') === String(ev.gradeScope || 'all');
+                });
+                if (dup) return;
+                rules.push({
+                    id: 'ao_' + Date.now() + '_' + added,
+                    kind: ev.kind || 'other',
+                    title: ev.title || (AUTO_OFF_KIND_LABEL[ev.kind] || '行事'),
+                    startDate: ev.startDate,
+                    endDate: ev.endDate || '',
+                    leadDays: 7,
+                    gradeScope: ev.gradeScope || 'all',
+                    createdAt: new Date().toLocaleString()
+                });
+                added++;
+            });
+            saveAutoOffRules(rules);
+            try { renderCalendar(); } catch (e) {}
+            renderAutoOffEditor();
+            alert('年度予定から ' + added + ' 件を自動登録しました。\n' + found.map(function (e) { return '・' + (AUTO_OFF_KIND_LABEL[e.kind] || '行事') + '：' + e.startDate; }).join('\n'));
+        } catch (e) {
+            alert('読み取りに失敗しました: ' + ((e && e.message) || e) + '\n手入力で登録してください。');
+        }
+    };
+
+    /* ---------- 出席率計算に「自動オフ」を反映 ---------- */
+    window.memberAttendanceStat = function (acc) {
+        const practices = (typeof getPracticesArray_ === 'function' ? getPracticesArray_() : []).filter(function (p) { return p && p.date; });
+        const isThird = isThirdGrade_(acc.grade);
+        const counted = practices.filter(function (p) {
+            if (isThird && isAfterSummerStart(p.date)) return false;   // 3年生は夏休み以降を除外
+            const ao = autoOffOn(p.date);
+            if (ao.off) return false;                                   // 全員オフの日は稽古なし
+            if (isThird && ao.off3) return false;                       // 3年生のみオフの日
+            return true;
+        });
+        let attended = 0, excused = 0;
+        counted.forEach(function (p) {
+            const names = (p.attendedMembers || []).map(String);
+            if (names.indexOf(String(acc.name)) >= 0) attended++;
+            else if (hasExcuseNoticeFor_(acc.name, p.date)) excused++;
+        });
+        const denom = counted.length - excused;
+        return {
+            total: counted.length, attended: attended, excused: excused, denom: denom,
+            rate: denom > 0 ? Math.min(100, (attended / denom) * 100) : null,
+            thirdGrade: isThird, exempt: denom <= 0
+        };
+    };
+
+    /* ---------- savePractice 上書き（自動オフ・3年生のみオフ対応） ---------- */
+    window.savePractice = function () {
+        const dateEl = document.getElementById('practice-date');
+        if (!dateEl) return;
+        const date = dateEl.value;
+        if (!date) return alert('日付を入力してください。');
+
+        const ao = autoOffOn(date);
+        if (ao.off) {
+            if (!confirm('この日は「' + ao.labels.join('／') + '」で通常稽古オフです。\nそれでも稽古日誌を登録しますか？')) return;
+        }
+        const thirdBlocked = ao.off3;
+        if (thirdBlocked && !confirm('この日は3年生のみオフ（3年生のテスト前）です。\n3年生は出席者に入れずに登録します。よろしいですか？')) return;
+
+        VALID_ACCOUNTS = getSavedAccounts();
+        const attendIds = (window.__practiceAttendIds || []).map(String);
+        const attendedMembers = attendIds.map(function (id) {
+            const a = VALID_ACCOUNTS.find(x => String(x.id) === String(id));
+            if (!a) return '';
+            if (thirdBlocked && isThirdGrade_(a.grade)) return '';
+            return String(a.name || '');
+        }).filter(Boolean);
+        window.__practiceAttendIds = null;
+
+        const vacNow = vacationOn(date);
+        if (vacNow && !(currentUser && (currentUser.isAdvisor || currentUser.isMaker))) {
+            return alert('長期休み（' + vacNow.label + '）中の稽古は顧問が登録します。');
+        }
+        const totalMembers = VALID_ACCOUNTS.filter(a => !a.isAdvisor && a.grade !== '卒業'
+            && !(isThirdGrade_(a.grade) && isAfterSummerStart(date))
+            && !(thirdBlocked && isThirdGrade_(a.grade))).length;
+        const attendanceRate = totalMembers > 0 ? ((attendedMembers.length / totalMembers) * 100).toFixed(1) : 0;
+
+        let practices = [];
+        try { practices = JSON.parse(localStorage.getItem('system_practices') || '[]'); } catch (e) { practices = []; }
+        practices.unshift({
+            id: Date.now(), date: date, attendedMembers: attendedMembers,
+            totalMembersCount: totalMembers, attendanceRate: attendanceRate,
+            thirdGradeBlocked: thirdBlocked, autoOff: ao.off ? ao.labels.join('／') : ''
+        });
+        localStorage.setItem('system_practices', JSON.stringify(practices));
+        alert('⚔️ 稽古日誌を保存しました！\n本日出席率: ' + attendanceRate + '% (' + attendedMembers.length + '/' + totalMembers + '名)'
+            + (thirdBlocked ? '\n※ 3年生のみオフのため3年生は分母から除外しています。' : ''));
+        dateEl.value = '';
+        renderPracticeHistory();
+        renderPracticeAttendanceChecklist();
+        try { checkAttendanceWarnings(true); } catch (e) {}
+    };
+
+    /* ---------- attendanceDayKind_ 上書き（自動オフを稽古日判定に反映） ---------- */
+    window.attendanceDayKind_ = function (key, dayEvents, isHoliday, vacPeriod) {
+        const satEv = (dayEvents || []).find(e => e && e.type === 'saturday');
+        const tourEv = (dayEvents || []).find(e => e && e.type === 'tournament');
+        const workEv = (dayEvents || []).find(e => e && e.type === 'vacation-work');
+        if (satEv) return { kind: 'saturday', title: '土曜活動 ' + (satEv.title || '') };
+        if (tourEv) return { kind: 'tournament', title: '大会・活動 ' + (tourEv.title || '') };
+        if (workEv) return { kind: 'work', title: (workEv.title || '必須活動') };
+        const dow = new Date(String(key) + 'T00:00:00').getDay();
+        const off = (dayEvents || []).some(e => e && (e.type === 'off' || e.type === 'vacation-off'));
+        const ao = autoOffOn(key);
+        if (ao.off) return null;
+        if ((dow === 2 || dow === 5) && !isHoliday && !off && !vacPeriod) {
+            return { kind: 'practice', title: ao.off3 ? '通常稽古（3年生のみオフ）' : '通常稽古' };
+        }
+        return null;
+    };
+
+    /* ---------- 2) 会計データの削除 ---------- */
+    window.renderAccountingList = function () {
+        const container = document.getElementById('accounting-list');
+        if (!container) return;
+        if (!currentUser) { container.innerHTML = '<p class="no-data-msg">ログインしてください。</p>'; return; }
+        const docs = getAccountingDocs().slice().sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)));
+        const canEdit = (typeof isAccountingEditor === 'function' && isAccountingEditor()) ||
+            !!(currentUser && (currentUser.isMaker || currentUser.role === '作成者' || currentUser.isAdvisor));
+        let head = '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">'
+            + '<span style="font-size:0.8rem; color:#555;">全 ' + docs.length + ' 件</span>'
+            + (canEdit ? '<button type="button" class="btn-danger" style="width:auto; padding:5px 12px; font-size:0.75rem;" onclick="deleteAllAccountingDocs()">🗑 会計データを全削除</button>' : '')
+            + '</div>';
+        if (!docs.length) { container.innerHTML = head + '<p class="no-data-msg">まだ提出がありません。</p>'; return; }
+        let html = head + '<div class="match-table-wrapper"><table class="match-table"><thead><tr><th>年度</th><th>種別</th><th>金額</th><th>提出者</th><th>日時</th><th>ファイル</th>' + (canEdit ? '<th>削除</th>' : '') + '</tr></thead><tbody>';
+        docs.forEach(d => {
+            const amount = Number(d.amount || 0);
+            const fileCell = d.driveFileId
+                ? `<button class="btn-primary" style="padding:4px 10px; font-size:0.75rem;" onclick="openAccountingFile('${escapeHTML(d.driveFileId)}','${escapeHTML(d.mimeType || '')}')">開く</button>`
+                : '<span style="font-size:0.75rem; color:#666;">0円（レシート不要）</span>';
+            html += '<tr><td>' + escapeHTML(String(d.year)) + '年度</td><td>' + escapeHTML(accountingTypeLabel(d.type)) + '</td><td>' + amount.toLocaleString() + '円</td><td>' + escapeHTML(d.uploadedBy || '') + '</td><td style="font-size:0.75rem;">' + escapeHTML(d.uploadedAt || '') + '</td><td>' + fileCell + '</td>'
+                + (canEdit ? `<td><button type="button" class="btn-danger" style="padding:3px 9px; font-size:0.72rem;" onclick="deleteAccountingDoc('${escapeHTML(String(d.id))}')">削除</button></td>` : '')
+                + '</tr>';
+        });
+        html += '</tbody></table></div>';
+        container.innerHTML = html;
+    };
+
+    window.deleteAccountingDoc = async function (id) {
+        const docs = getAccountingDocs();
+        const target = docs.find(d => String(d.id) === String(id));
+        if (!target) return;
+        if (!confirm('この会計データを削除しますか？\n\n' + String(target.year) + '年度 / ' + accountingTypeLabel(target.type)
+            + ' / ' + Number(target.amount || 0).toLocaleString() + '円\n（元に戻せません）')) return;
+        if (target.driveFileId && gasToken()) {
+            try { await gasRun('apiDeleteProtectedFile', target.driveFileId, gasToken()); } catch (e) { console.warn('Driveファイル削除失敗', e); }
+        }
+        saveAccountingDocs(docs.filter(d => String(d.id) !== String(id)));
+        renderAccounting();
+        showToast('会計データを削除しました');
+    };
+
+    window.deleteAllAccountingDocs = async function () {
+        const docs = getAccountingDocs();
+        if (!docs.length) return alert('削除するデータがありません。');
+        if (!confirm('会計データ（予算・決算・レシート）を全 ' + docs.length + ' 件削除します。\nこの操作は元に戻せません。よろしいですか？')) return;
+        if (!confirm('本当に全削除しますか？（最終確認）')) return;
+        if (gasToken()) {
+            for (let i = 0; i < docs.length; i++) {
+                if (!docs[i].driveFileId) continue;
+                try { await gasRun('apiDeleteProtectedFile', docs[i].driveFileId, gasToken()); } catch (e) {}
+            }
+        }
+        saveAccountingDocs([]);
+        try { saveAccountingState({}); } catch (e) {}
+        renderAccounting();
+        alert('会計データをすべて削除しました。');
+    };
+
+    /* ---------- 3) PDF/ファイルビューア（ポップアップブロック回避） ---------- */
+    let FILE_VIEWER_URL = '';
+    window.openFileViewerFromBase64 = function (base64, name, mime) {
+        const overlay = document.getElementById('file-viewer-overlay');
+        const frame = document.getElementById('file-viewer-frame');
+        const title = document.getElementById('file-viewer-title');
+        if (!overlay || !frame) return alert('ビューアを初期化できませんでした。');
+        const type = mime || 'application/pdf';
+        const url = URL.createObjectURL(new Blob([base64ToBytes(base64)], { type: type }));
+        if (FILE_VIEWER_URL) { try { URL.revokeObjectURL(FILE_VIEWER_URL); } catch (e) {} }
+        FILE_VIEWER_URL = url;
+        if (title) title.textContent = name || 'ファイル';
+        // PDF/画像は iframe でそのまま表示（別タブを開かないのでブロックされない）
+        frame.innerHTML = '';
+        if (String(type).indexOf('image/') === 0) {
+            const img = document.createElement('img');
+            img.src = url;
+            img.style.cssText = 'display:block; width:100%; max-height:70vh; object-fit:contain;';
+            frame.appendChild(img);
+        } else {
+            const f = document.createElement('iframe');
+            f.src = url;
+            f.style.cssText = 'width:100%; height:70vh; border:none; background:#fff;';
+            frame.appendChild(f);
+            const bar = document.createElement('div');
+            bar.style.cssText = 'font-size:0.75rem; color:#666; margin-top:6px;';
+            bar.innerHTML = '表示されない場合は <a href="' + url + '" target="_blank" rel="noopener" download="' + escapeHTML(name || 'file.pdf') + '">ここをクリック（保存）</a> してください。';
+            frame.appendChild(bar);
+        }
+        overlay.style.display = 'flex';
+    };
+    window.closeFileViewer = function () {
+        const overlay = document.getElementById('file-viewer-overlay');
+        if (overlay) overlay.style.display = 'none';
+        const frame = document.getElementById('file-viewer-frame');
+        if (frame) frame.innerHTML = '';
+    };
+
+    // 既存3経路をすべて安全なビューアへ差し替え
+    window.openAccountingFile = async function (fileId, mime) {
+        if (!fileId) return alert('ファイルはありません（0円計上のためレシート不要です）。');
+        if (!gasToken()) return alert('ログインしてください。');
+        try {
+            showToast('ファイルを読み込んでいます…');
+            const res = await gasRun('getProtectedFile', fileId, gasToken());
+            if (!res || !res.ok) throw new Error((res && res.message) || '取得できませんでした');
+            openFileViewerFromBase64(res.base64, res.fileName || '会計書類', res.mimeType || mime || 'application/pdf');
+        } catch (e) { alert('ファイルを開けません: ' + ((e && e.message) || e)); }
+    };
+    window.openProtectedManual = async function (fileId, fileName) {
+        if (!currentUser || !gasToken()) return alert('マニュアルを閲覧するにはログインしてください。');
+        try {
+            showToast('PDFを読み込んでいます…');
+            const res = await gasRun('getProtectedManualPdf', fileId, gasToken());
+            if (!res || !res.ok) throw new Error((res && res.message) || 'PDFを取得できませんでした。');
+            openFileViewerFromBase64(res.base64, fileName || res.fileName || 'manual.pdf', 'application/pdf');
+        } catch (e) { alert('PDFを開けません: ' + ((e && e.message) || e)); }
+    };
+    window.openDmAttachment = async function (fileId, name) {
+        if (!fileId) return;
+        if (!gasToken()) return alert('ログインしてください。');
+        try {
+            const res = await gasRun('getProtectedFile', fileId, gasToken());
+            if (!res || !res.ok) throw new Error((res && res.message) || '取得できませんでした');
+            openFileViewerFromBase64(res.base64, name || res.fileName || '添付ファイル', res.mimeType || '');
+        } catch (e) { alert('添付ファイルを開けません: ' + ((e && e.message) || e)); }
+    };
+    window.openProtectedFileById = window.openDmAttachment;
+
+    /* ---------- 4) 画像読み込みでスクロールが飛ぶ問題 ---------- */
+    // 画像は固定高さの枠に object-fit:contain で入れるため、読み込み完了でレイアウトが変化しない。
+    // さらに DM/一覧の再描画時にスクロール位置を復元する。
+    window.withScrollPreserved = function (el, fn) {
+        const holder = el || document.getElementById('main-content');
+        const y = holder ? holder.scrollTop : window.scrollY;
+        const wy = window.scrollY;
+        try { fn(); } finally {
+            requestAnimationFrame(function () {
+                if (holder) holder.scrollTop = y;
+                window.scrollTo(0, wy);
+            });
+        }
+    };
+
+    /* ---------- 5) 休止時間（ダウンタイム）で自動リロード ---------- */
+    function downtimeWindow_() {
+        let raw = null;
+        try { raw = JSON.parse(localStorage.getItem('system_pending_code') || 'null'); } catch (e) { raw = null; }
+        if (!raw) return null;
+        const s = raw.startAt ? new Date(String(raw.startAt).replace(' ', 'T')).getTime() : 0;
+        const e2 = raw.endAt ? new Date(String(raw.endAt).replace(' ', 'T')).getTime() : 0;
+        if (!s && !e2) return null;
+        return { start: isNaN(s) ? 0 : s, end: isNaN(e2) ? 0 : e2 };
+    }
+    let DT_TIMER = null;
+    window.tickDowntime = function () {
+        const w = downtimeWindow_();
+        const screen = document.getElementById('maintenance-screen');
+        if (!w) { if (screen) screen.style.display = 'none'; return; }
+        const now = Date.now();
+        const inside = (!w.start || now >= w.start) && (!w.end || now < w.end) && (w.start || w.end);
+        let state = '';
+        try { state = sessionStorage.getItem('dt_state') || ''; } catch (e) {}
+
+        if (inside) {
+            if (screen) screen.style.display = 'flex';
+            if (state !== 'in') {
+                try { sessionStorage.setItem('dt_state', 'in'); } catch (e) {}
+                location.reload();
+                return;
+            }
+        } else {
+            if (screen) screen.style.display = 'none';
+            if (state === 'in') {
+                try { sessionStorage.setItem('dt_state', 'out'); } catch (e) {}
+                location.reload();
+                return;
+            }
+        }
+        // 次の境界時刻に正確にリロード（休止開始・終了の瞬間）
+        if (DT_TIMER) { clearTimeout(DT_TIMER); DT_TIMER = null; }
+        let nextAt = 0;
+        if (w.start && now < w.start) nextAt = w.start;
+        else if (w.end && now < w.end) nextAt = w.end;
+        if (nextAt) {
+            const delay = Math.max(1000, Math.min(nextAt - now + 1500, 1800000));
+            DT_TIMER = setTimeout(function () {
+                try { sessionStorage.setItem('dt_state', ''); } catch (e) {}
+                location.reload();
+            }, delay);
+        }
+    };
+    try { setInterval(window.tickDowntime, 30000); } catch (e) {}
+    try { document.addEventListener('DOMContentLoaded', function () { setTimeout(window.tickDowntime, 3000); }); } catch (e) {}
+
+    /* ---------- 稽古状況「登録時」のメンバー絞り込み ----------
+     *  登録画面だけに適用。出欠一覧・出席率・名簿などの他画面は変更しない。
+     *  除外: その日に欠席連絡が入っている部員 / 夏休み以降の3年生 / 自動オフ対象
+     */
+    function practiceRegDateKey_() {
+        const el = document.getElementById('practice-date');
+        if (el && el.value) return String(el.value);
+        return attendanceDateKeyOf_(new Date());
+    }
+    function practiceRegRoster_() {
+        const dateKey = practiceRegDateKey_();
+        VALID_ACCOUNTS = getSavedAccounts();
+        const ao = (typeof autoOffOn === 'function') ? autoOffOn(dateKey) : { off: false, off3: false, labels: [] };
+        const all = VALID_ACCOUNTS.filter(function (a) {
+            return a && !a.isAdvisor && a.grade !== '卒業' && !isRetiredAccount(a);
+        });
+        const shown = [], notice = [], third = [], offs = [];
+        all.forEach(function (a) {
+            if (ao.off || (ao.off3 && isThirdGrade_(a.grade))) { offs.push(a); return; }
+            if (isThirdGrade_(a.grade) && isAfterSummerStart(dateKey)) { third.push(a); return; }
+            if (hasExcuseNoticeFor_(a.name, dateKey)) { notice.push(a); return; }
+            shown.push(a);
+        });
+        shown.sort(function (x, y) {
+            return gradeNumber_(y.grade) - gradeNumber_(x.grade)
+                || String(x.class || '').localeCompare(String(y.class || ''), 'ja')
+                || String(x.name || '').localeCompare(String(y.name || ''), 'ja');
+        });
+        return { dateKey: dateKey, shown: shown, notice: notice, third: third, off: offs, ao: ao };
+    }
+    window.onPracticeDateChanged = function () {
+        window.__practiceAttendIds = [];
+        renderPracticeAttendanceChecklist();
+    };
+    window.renderPracticeAttendanceChecklist = function () {
+        const container = document.getElementById('practice-attendance-checklist');
+        if (!container) return;
+        const roster = practiceRegRoster_();
+        const shown = roster.shown;
+
+        // 除外した人数の説明
+        const noteEl = document.getElementById('practice-attendance-excluded');
+        if (noteEl) {
+            const parts = [];
+            if (roster.off.length) parts.push('自動オフ（' + (roster.ao.labels || []).join('／') + '）' + roster.off.length + '名');
+            if (roster.third.length) parts.push('3年生（夏休み以降）' + roster.third.length + '名');
+            if (roster.notice.length) parts.push('欠席連絡あり ' + roster.notice.length + '名');
+            noteEl.innerHTML = parts.length
+                ? '表示していない部員：' + parts.join(' ／ ') + '（' + escapeHTML(roster.dateKey) + ' 時点）'
+                : '';
+        }
+
+        if (shown.length === 0) {
+            container.innerHTML = '<p style="font-size:0.8rem; color:#888;">この日に登録できる部員がいません（欠席連絡・長期休み・自動オフなど）。</p>';
+            window.__practiceAttendIds = [];
+            return;
+        }
+
+        const ids = shown.map(function (m) { return String(m.id); });
+        if (!Array.isArray(window.__practiceAttendIds)) {
+            window.__practiceAttendIds = ids.slice();
+        }
+        // 除外された部員・存在しないIDは選択から落とす
+        window.__practiceAttendIds = window.__practiceAttendIds.map(String).filter(function (id) { return ids.indexOf(id) >= 0; });
+
+        const candidates = shown.filter(function (m) { return window.__practiceAttendIds.indexOf(String(m.id)) < 0; });
+        const chipHtml = window.__practiceAttendIds.map(function (id) {
+            const m = shown.find(function (x) { return String(x.id) === String(id); });
+            if (!m) return '';
+            return '<span class="cg-chip">' + escapeHTML(m.name) + ' (' + escapeHTML(m.grade ? m.grade + '年' : '') + ')'
+                + '<button type="button" onclick="removePracticeAttend(\'' + escapeHTML(String(id)) + '\')" aria-label="削除">×</button></span>';
+        }).join('');
+
+        container.innerHTML = '<select id="practice-attend-select" onchange="addPracticeAttendFromSelect()"></select>'
+            + '<div style="margin-top:6px;">' + (chipHtml || '<p style="font-size:0.8rem; color:#888; margin:2px 0;">まだ誰も選択されていません。上のドロップダウンから追加してください。</p>') + '</div>';
+
+        const sel = document.getElementById('practice-attend-select');
+        if (sel) {
+            sel.innerHTML = '<option value="">メンバーを選択…</option>'
+                + candidates.map(function (m) {
+                    return '<option value="' + escapeHTML(String(m.id)) + '">' + escapeHTML(m.name)
+                        + ' (' + escapeHTML(m.grade ? m.grade + '年' : '') + ')</option>';
+                }).join('');
+        }
+    };
+
+    /* ---------- 初期化 ---------- */
+    (function () {
+        const run = function () {
+            try { renderAutoOffEditor(); } catch (e) {}
+            try { tickDowntime(); } catch (e) {}
+            try { if (getAutoOffRules().length) { renderCalendar(); } } catch (e) {}
+        };
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(run, 1200); });
+        else setTimeout(run, 1200);
+    })();
+    </script>
 <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092" integrity="sha512-UKNk8GbxkABxKcXYuLkO16EleLGUkcvJWtpSNmExE0Too3ZaFAxTscNWEc1OdAv5/BikHawapSCaiD2XCmp+Bw==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","spa":2}' crossorigin="anonymous"></script>
 </body>
 </html>

@@ -45,7 +45,65 @@ const SECONDARY_PASS_DEFAULTS = {
 };
 const SECONDARY_PASS_PREFIX = 'SEC_PASS_';
 
+/** 利用可能時間・特別日設定（日本時間） */
+function jstNowParts_() {
+  const s = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy,MM,dd,HH,mm');
+  return s.split(',').map(Number);
+}
+function getAccessExceptionDates_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty('CLUB_ACCESS_EXCEPTION_DATES') || '[]'); }
+  catch (e) { return []; }
+}
+function accessIsExceptionDay_(dateKey) {
+  return getAccessExceptionDates_().some(x => x && x.enabled !== false && (
+    (x.date && String(x.date) === dateKey) ||
+    (x.start && x.end && dateKey >= String(x.start) && dateKey <= String(x.end))
+  ));
+}
+function getSiteAccessStatus_() {
+  const [y,mo,d,h,mi] = jstNowParts_();
+  const dateKey = [y, String(mo).padStart(2,'0'), String(d).padStart(2,'0')].join('-');
+  const day = Number(Utilities.formatDate(new Date(Date.UTC(y, mo - 1, d)), 'Asia/Tokyo', 'u')) % 7; // 'u'は月=1..日=7 → %7で0=日曜
+  const mins = h * 60 + mi;
+  if (accessIsExceptionDay_(dateKey)) return { allowed:true, date:dateKey, reason:'特別日' };
+  if (mins >= 12*60+30 && mins < 13*60) return { allowed:true, date:dateKey, reason:'昼休み' };
+  let start = 8*60+30, end = null;
+  if (day === 1) end = 14*60;
+  else if (day >= 2 && day <= 5) end = 15*60;
+  else if (day === 6) end = 12*60;
+  else return { allowed:true, date:dateKey, reason:'日曜日' };
+  const blocked = mins >= start && mins < end;
+  return { allowed:!blocked, date:dateKey, reason:blocked?'利用制限時間':'通常時間', until: end };
+}
+function assertSiteAccess_() {
+  const st = getSiteAccessStatus_();
+  if (!st.allowed) throw new Error('現在はシステムの利用時間外です。利用可能時間をご確認ください。');
+}
+function apiGetAccessExceptions(token) {
+  const session = requireSession_(token);
+  if (!session || (!session.isMaker && !session.isAdvisor)) throw new Error('設定を閲覧する権限がありません。');
+  return { ok:true, items:getAccessExceptionDates_() };
+}
+function apiSaveAccessExceptions(token, json) {
+  const session = requireSession_(token);
+  if (!session || (!session.isMaker && !session.isAdvisor)) throw new Error('設定を変更する権限がありません。');
+  let items; try { items = JSON.parse(String(json || '[]')); } catch(e) { throw new Error('日付設定の形式が正しくありません。'); }
+  if (!Array.isArray(items) || items.length > 100) throw new Error('特別日は100件以内で設定してください。');
+  const clean = items.map(x => {
+    const date = String(x.date || '').trim(), start = String(x.start || '').trim(), end = String(x.end || '').trim();
+    const valid = v => /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v+'T00:00:00+09:00'));
+    if (date && !valid(date)) throw new Error('日付はYYYY-MM-DD形式で入力してください。');
+    if (!date && (!valid(start) || !valid(end) || start > end)) throw new Error('期間の開始日・終了日を正しく入力してください。');
+    return date ? {date:date, label:String(x.label || '大会・審査日').slice(0,80), enabled:x.enabled !== false} : {start:start,end:end,label:String(x.label || '学校休業期間').slice(0,80),enabled:x.enabled !== false};
+  });
+  PropertiesService.getScriptProperties().setProperty('CLUB_ACCESS_EXCEPTION_DATES', JSON.stringify(clean));
+  appendAudit_(session.id, '利用制限の特別日を更新', 'CLUB_ACCESS_EXCEPTION_DATES', clean.length + '件');
+  return {ok:true,items:clean};
+}
+
 function doGet() {
+  const access = getSiteAccessStatus_();
+  if (!access.allowed) return HtmlService.createHtmlOutput('<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:sans-serif;text-align:center;padding:12vh 20px;color:#333"><h2>現在は利用時間外です</h2><p>システムの利用可能時間に再度アクセスしてください。</p><p>平日・土曜の制限時間中は利用できません。12:30〜13:00、日曜日、大会・審査日、学校休業期間は利用できます。</p></body></html>').setTitle('利用時間外');
   return HtmlService.createHtmlOutputFromFile('index')
     .setTitle('部活動管理システム')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -140,8 +198,12 @@ function setupClubSystem(setupSecret) {
   // 5) 年次トリガー（失敗してもセットアップ自体は成功扱い）
   try { installAnnualAdvisorResetTrigger(); }
   catch (e) { result.trigger = 'failed: ' + e; result.warnings.push('年次トリガー作成に失敗しました（後で単体実行してください）'); }
+  try { installAnnualPromotionTrigger(); }
+  catch (e) { result.warnings.push('自動進級トリガー作成に失敗しました（後で installAnnualPromotionTrigger を単体実行してください）'); }
   try { installMonthlyAttendanceReportTrigger(); }
   catch (e) { result.warnings.push('月次出席率レポートのトリガー作成に失敗しました（後で installMonthlyAttendanceReportTrigger を単体実行してください）'); }
+  try { installDailyClubBackupTrigger(); }
+  catch (e) { result.warnings.push('日次バックアップのトリガー作成に失敗しました（作成者ツールから手動バックアップしてください）'); }
 
   // 6) スクリプトプロパティの既定値（保護パスワード等）を投入
   try { ensureSecondaryPassDefaults_(); } catch (e) { result.warnings.push('保護パスワード初期化スキップ: ' + e); }
@@ -225,6 +287,7 @@ function createInitialCreator(setupSecret) {
 }
 
 function loginWithCredentials(id, password) {
+  try { assertSiteAccess_(); } catch(e) { return { ok:false, message:e.message }; }
   id = String(id || '').replace(/[\u3000\s]+/g, ' ').trim();
   password = String(password == null ? '' : password);
   if (!id || !password) return { ok: false, message: 'IDとパスワードを入力してください。' };
@@ -358,22 +421,6 @@ function revealAccountPassword(token, targetId) {
  *  - knownIds にない（他端末で追加された）アカウントは保持
  * 不正な行があっても全体を失敗させず、結果を返す。
  */
-/** 登録画面用：登録済みアカウントの有無と、ログイン中ユーザーの登録権限をサーバー側で確認 */
-function getClubRegistrationStatus(token) {
-  const accounts = readData_('system_accounts', []);
-  const safeAccounts = Array.isArray(accounts) ? accounts : [];
-  const session = requireSession_(token);
-  const isMaker = !!(session && session.isMaker);
-  return {
-    ok: true,
-    hasAccounts: safeAccounts.length > 0,
-    accountCount: safeAccounts.length,
-    isMaker: isMaker,
-    // 作成者がログイン中の場合だけ、ID採番用に公開アカウント情報を返す
-    accounts: isMaker ? safeAccounts.map(publicAccount_) : []
-  };
-}
-
 /**
  * 部員・顧問の新規登録API。
  * 初回は作成者パスコードで最初の作成者だけを作成し、
@@ -452,79 +499,6 @@ function registerClubAccount(token, jsonAccount, bootstrapPasscode) {
       accounts: accounts.map(publicAccount_),
       user: publicAccount_(user)
     };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-/** 初期パスワード生成（Pass@＋3桁の数字） */
-function makeSelfRegPassword_() {
-  return 'Pass@' + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
-}
-
-/** 公開登録：部員本人が自分の一般アカウントを作成する。作成者・顧問権限は付与しない。
- *  kind に「顧問」を指定すると顧問アカウント（IDは000001／000002、最大2名）を作成する。
- *  初期パスワードは入力させず、サーバー側で「Pass@＋3桁の数字」を自動生成し、戻り値で1回だけ返す。 */
-function selfRegisterClubMember(name, grade, className, gender, kind) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    name = String(name || '').replace(/[\u3000\s]+/g, ' ').trim();
-    grade = String(grade == null ? '' : grade).trim();
-    className = String(className || '').trim();
-    gender = String(gender || '').trim();
-    kind = String(kind || '部員').trim();
-    const isAdvisor = (kind === '顧問');
-    if (!name || name.length > 80) throw new Error('氏名を正しく入力してください。');
-    if (!gender) throw new Error('性別を選択してください。');
-    if (!isAdvisor) {
-      grade = Number(grade);
-      if (![1, 2, 3].includes(grade)) throw new Error('学年の指定が正しくありません。');
-      if (!/^[1-5]組$/.test(className)) throw new Error('クラスの指定が正しくありません。');
-    }
-
-    const accounts = readData_('system_accounts', []);
-    if (!Array.isArray(accounts) || accounts.length === 0) throw new Error('システムの初期設定が未完了です。作成者の登録後にお試しください。');
-    if (accounts.some(a => String(a.name || '').replace(/\s+/g, '') === name.replace(/\s+/g, '') && String(a.status || 'active') === 'active')) {
-      throw new Error('同じ氏名のアカウントが既に登録されています。顧問または作成者に確認してください。');
-    }
-
-    const password = makeSelfRegPassword_();
-    const now = new Date();
-    let id = '';
-    const user = {
-      id: '', name: name, isAdvisor: isAdvisor, isMaker: false,
-      role: isAdvisor ? '顧問' : '一般',
-      grade: isAdvisor ? '顧問' : String(grade), class: isAdvisor ? '' : className,
-      gender: gender,
-      joinedAt: now.toISOString(), createdAt: now.toISOString(), status: 'active'
-    };
-
-    if (isAdvisor) {
-      const used = accounts.filter(a => a && a.isAdvisor).map(a => Number(a.id)).filter(n => !isNaN(n));
-      let n = 1;
-      while (used.indexOf(n) >= 0 && n <= 2) n++;
-      if (n > 2) throw new Error('顧問アカウントは2名までです（000001／000002）。');
-      id = String(n).padStart(6, '0');
-    } else {
-      const fy = Number(Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy')) - (Number(Utilities.formatDate(now, 'Asia/Tokyo', 'M')) < 4 ? 1 : 0);
-      const entryYear = fy - (grade - 1);
-      const seq = nextMemberSeq_(accounts, entryYear);
-      if (seq > 99) throw new Error('この代の登録上限（99名）に達しています。');
-      id = String(entryYear % 100).padStart(2, '0') + String(kiseiOfEntryYear_(entryYear)).padStart(2, '0') + String(seq).padStart(2, '0');
-      user.entryYear = entryYear;
-      user.kisei = String(kiseiOfEntryYear_(entryYear));
-    }
-    if (accounts.some(a => String(a.id) === id)) throw new Error('IDの採番が重複しました。もう一度登録してください。');
-    user.id = id;
-
-    setAccountPassword_(user, password);
-    accounts.push(user);
-    writeData_('system_accounts', accounts);
-    saveAccountsBackup_(accounts);
-    bumpRev_('system_accounts');
-    try { appendAudit_('self-registration', '本人による登録', id, name); } catch (e) {}
-    return { ok: true, id: id, name: name, kind: kind, password: password, user: publicAccount_(user), total: accounts.length };
   } finally {
     lock.releaseLock();
   }
@@ -714,6 +688,13 @@ function apiAttachmentUrl(fileId, token) {
   return { ok: true, url: file.getUrl(), name: file.getName() };
 }
 
+/** ゲスト向け公開結果（閲覧のみ）。 */
+function apiPublicResults() {
+  const tournaments = readData_('system_tournaments', []);
+  const exams = readData_('system_exams', []);
+  return { ok: true, tournaments: Array.isArray(tournaments) ? tournaments : [], exams: Array.isArray(exams) ? exams : [] };
+}
+
 /** ゲストでも三役登録できるよう、公開してよい項目だけ返す */
 function apiPublicMembers() {
   const accounts = readData_('system_accounts', []);
@@ -727,17 +708,6 @@ function apiPublicMembers() {
     };
   });
   return { ok: true, members: members };
-}
-
-/** ゲスト向け公開結果（閲覧のみ）。 */
-function apiPublicResults() {
-  const tournaments = readData_('system_tournaments', []);
-  const exams = readData_('system_exams', []);
-  return {
-    ok: true,
-    tournaments: Array.isArray(tournaments) ? tournaments : [],
-    exams: Array.isArray(exams) ? exams : []
-  };
 }
 
 /** 三役の3名を検証して名簿ごと返す */
@@ -939,10 +909,13 @@ function apiSaveData(key, jsonValue, token, baseRev) {
     system_practices: isMaker || session.isAdvisor,
     system_last_promotion_year: isMaker,
     system_advisor_reset_year: isMaker,
-    system_accounting_docs: isMaker || !!session.isTreasurer || session.isAdvisor || isAdminToolUnlocked_('accounting', session.id),
-    system_accounting_state: isMaker || !!session.isTreasurer || isAdminToolUnlocked_('accounting', session.id),
+    system_accounting_docs: isMaker || !!session.isTreasurer,
+    system_accounting_state: isMaker || !!session.isTreasurer,
     system_attendance_alert_state: isMaker || session.isAdvisor || session.isCaptain,
-    system_monthly_reports: isMaker
+    system_monthly_reports: isMaker,
+    system_auto_off_rules: isMaker || session.isAdvisor || session.isCaptain,
+    system_vacation_periods: isMaker || session.isAdvisor || session.isCaptain,
+    system_pending_code: isMaker
   };
   if (Object.prototype.hasOwnProperty.call(permissionMap, key) && !permissionMap[key]) {
     throw new Error('このデータを変更する権限がありません。');
@@ -977,14 +950,46 @@ function apiSaveData(key, jsonValue, token, baseRev) {
     const oldMessages = readData_(key, []);
     let newMessages;
     try { newMessages = jsonValue ? JSON.parse(jsonValue) : []; } catch (e) { throw new Error('通知データの形式が正しくありません。'); }
+    if (!Array.isArray(newMessages)) throw new Error('通知データの形式が正しくありません。');
     const protectedMessages = oldMessages.filter(m =>
       String(m.senderId) !== String(session.id) &&
       String(m.receiverId) !== String(session.id) &&
       String(m.receiverId) !== 'ALL'
     );
-    const merged = protectedMessages.concat((newMessages || []));
+    const merged = protectedMessages.concat(newMessages);
     writeData_(key, merged);
+    try {
+      const prior = {};
+      oldMessages.forEach(m => { prior[messageFingerprint_(m)] = true; });
+      const sent = newMessages.filter(m => m && String(m.senderId) === String(session.id)
+        && String(m.receiverId || '') !== 'ALL' && !prior[messageFingerprint_(m)]);
+      sent.forEach(m => {
+        appendAudit_(session.id, '個別メッセージ送信', String(m.receiverId || ''), String(m.content || '').slice(0,120));
+      });
+      // 一般部員の個別DMのみ顧問・作成者へ通知。三役・顧問・作成者の送信は通知対象外。
+      if (!session.isMaker && !session.isAdvisor && !session.isCaptain) {
+        sent.forEach(m => notifyStaffOfMemberDm_(session, m));
+      }
+    } catch (e) { Logger.log('DM通知・履歴処理エラー: ' + e); }
     return { ok: true, rev: bumpRev_(key) };
+  }
+
+  if (key === 'system_attendance') {
+    let incoming;
+    try { incoming = jsonValue ? JSON.parse(jsonValue) : []; } catch (e) { throw new Error('出欠連絡データの形式が正しくありません。'); }
+    if (!Array.isArray(incoming)) throw new Error('出欠連絡データの形式が正しくありません。');
+    const previous = readData_('system_attendance', []);
+    const oldSet = {};
+    (Array.isArray(previous) ? previous : []).forEach(x => { oldSet[attendanceFingerprint_(x)] = true; });
+    const today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    const mins = Number(Utilities.formatDate(new Date(), 'Asia/Tokyo', 'H')) * 60 + Number(Utilities.formatDate(new Date(), 'Asia/Tokyo', 'm'));
+    const addedToday = incoming.filter(x => x && String(x.dateKey || '') === today && !oldSet[attendanceFingerprint_(x)]);
+    if (addedToday.length && mins >= 8 * 60) throw new Error('本日の出欠連絡は8:00で締め切りました。顧問または主将へ直接ご連絡ください。');
+    writeRawData_(key, String(jsonValue == null ? '' : jsonValue));
+    const rev = bumpRev_(key);
+    addedToday.forEach(x => appendAudit_(session.id, '当日出欠連絡', String(x.name || ''), String(x.status || '') + (x.remark ? ' / ' + String(x.remark).slice(0,100) : '')));
+    if (!addedToday.length) appendAudit_(session.id, '出欠連絡データを更新', key, '件数:' + incoming.length);
+    return { ok: true, rev: rev };
   }
   if (key === 'system_sanyi_data' && jsonValue) {
     try {
@@ -1006,6 +1011,9 @@ function apiSaveData(key, jsonValue, token, baseRev) {
     system_handover_docs: '引継ぎ資料を変更',
     system_toinkai_docs: '桐蔭会原稿を変更',
     system_manual_versions: 'マニュアルを変更',
+    system_auto_off_rules: '稽古自動オフ設定を変更',
+    system_vacation_periods: '長期休み期間を変更',
+    system_pending_code: 'サイト内コードを登録'
   };
   if (AUDIT_KEYS[key]) {
     let teaser = '';
@@ -1013,6 +1021,9 @@ function apiSaveData(key, jsonValue, token, baseRev) {
       try { const sd = JSON.parse(String(jsonValue || '{}')); teaser = '主将:' + sd.captainId + ' / 副将:' + sd.vice1Id + ' / 会計:' + sd.vice2Id; } catch (e) {}
     }
     try { appendAudit_(session.id, AUDIT_KEYS[key], key, teaser); } catch (e) {}
+  }
+  if (key !== 'system_audit_log' && !AUDIT_KEYS[key]) {
+    try { appendAudit_(session.id, 'データを保存', key, 'データを追加・編集・削除'); } catch (e) {}
   }
   return { ok: true, rev: newRev };
 }
@@ -1063,21 +1074,12 @@ function getProtectedFile(fileId, token) {
     props.getProperty('CLUB_MANUAL_FOLDER_ID')
   ].filter(Boolean);
 
-  const id = String(fileId || '');
-  const file = DriveApp.getFileById(id);
+  const file = DriveApp.getFileById(String(fileId));
   let allowed = false;
   const parents = file.getParents();
   while (parents.hasNext()) {
     const parent = parents.next();
     if (allowedFolders.indexOf(parent.getId()) >= 0) { allowed = true; break; }
-  }
-  // 会計書類として登録済みのファイルは、ログイン済みユーザーなら閲覧可能。
-  // ファイルIDがサーバー上の会計一覧に存在する場合に限定し、Drive全体は公開しない。
-  if (!allowed) {
-    const accountingDocs = readData_('system_accounting_docs', []);
-    allowed = Array.isArray(accountingDocs) && accountingDocs.some(function (doc) {
-      return doc && String(doc.driveFileId || '') === id;
-    });
   }
   if (!allowed) throw new Error('このファイルを閲覧する権限がありません。');
 
@@ -1176,6 +1178,47 @@ function runScheduledAdvisorReset(token) {
 }
 
 /** 作成者が手動で顧問アカウントを一括削除 */
+// ---- 部員の自動進級（毎年4月1日・日本時間） ----
+function installAnnualPromotionTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.filter(t => t.getHandlerFunction() === 'annualMemberPromotion').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('annualMemberPromotion').timeBased().everyDays(1).atHour(2).create();
+  return { ok: true, installed: true, schedule: '毎日2時台に確認し、4月1日以降の年度初回に進級' };
+}
+
+/** 毎日2時台に起動。4月1日以降、その年度の進級を一度だけ実行する。 */
+function annualMemberPromotion() {
+  const parts = jstParts_(new Date());
+  if (parts.m < 4) return { ok: true, skipped: true, reason: 'before-new-school-year' };
+  const year = String(parts.y);
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('CLUB_AUTO_PROMOTION_YEAR') === year) {
+    return { ok: true, skipped: true, alreadyDone: true, year: year };
+  }
+  const accounts = readData_('system_accounts', []);
+  if (!Array.isArray(accounts) || !accounts.length) return { ok: false, skipped: true, reason: 'no-accounts' };
+  let promoted = 0, graduated = 0, skipped = 0;
+  accounts.forEach(a => {
+    if (!a || a.isAdvisor || a.isMaker || a.role === '顧問' || a.role === '作成者') { skipped++; return; }
+    if (String(a.grade || '') === '卒業' || String(a.status || 'active') === 'graduated') { skipped++; return; }
+    if (String(a.lastPromotedYear || '') === year) { skipped++; return; }
+    const g = gradeNumberServer_(a.grade);
+    if (g < 1 || g > 3) { skipped++; return; }
+    if (g === 3) {
+      a.grade = '卒業'; a.class = ''; a.needsClassReselect = false; graduated++;
+    } else {
+      a.grade = String(g + 1); a.class = ''; a.needsClassReselect = true; promoted++;
+    }
+    a.lastPromotedYear = year;
+  });
+  if (promoted + graduated > 0) {
+    writeData_('system_accounts', accounts);
+    try { appendAudit_('system', '年度自動進級', year + '年度', '進級:' + promoted + '名 / 卒業:' + graduated + '名 / 対象外:' + skipped + '名'); } catch (e) {}
+  }
+  props.setProperty('CLUB_AUTO_PROMOTION_YEAR', year);
+  return { ok: true, year: year, promoted: promoted, graduated: graduated, skipped: skipped };
+}
+
 function deleteAdvisorAccounts(token) {
   const session = requireSession_(token);
   if (!session) throw new Error('ログイン期限が切れました。再ログインしてください。');
@@ -1497,56 +1540,49 @@ function requireSetupSecret_(secret) {
 function dataForSession_(session) {
   try { autoRestoreAccountsIfLost_(); } catch (e) {}
   const data = readAllData_();
-
-  // パスワード関連の情報は自動では返さない（作成者でも「表示」操作をした時だけ別APIで取得）
+  // 既読記録は専用APIでのみ扱い、一般ユーザーの全データ同期には含めない。
+  delete data.system_notice_reads;
   if (data.system_accounts) {
     try {
       const accounts = JSON.parse(data.system_accounts);
       data.system_accounts = JSON.stringify(accounts.map(publicAccount_));
-    } catch (e) {
-      delete data.system_accounts;
-    }
+    } catch (e) { delete data.system_accounts; }
   }
-
-  // 三役専用グループDMは、サーバー側でも三役以外（作成者を含む）に配信しない
-  let protectedGroupIds = [];
+  const sanyi = readData_('system_sanyi_data', {}) || {};
+  const uid = session ? String(session.id || '') : '';
+  const isMaker = !!(session && session.isMaker);
+  const isSanyiMember = !!(session && !isMaker &&
+    [sanyi.captainId, sanyi.vice1Id, sanyi.vice2Id].some(function (id) { return String(id || '') === uid; }));
+  const protectedGroupIds = [];
   try {
-    const sanyi = readData_('system_sanyi_data', {}) || {};
-    const isSanyiMember = [sanyi.captainId, sanyi.vice1Id, sanyi.vice2Id]
-      .some(v => String(v || '') === String(session && session.id));
-    if (!isSanyiMember && data.system_group_dms) {
-      try {
-        const groups = JSON.parse(data.system_group_dms);
-        if (Array.isArray(groups)) {
-          const isSanyiGroup = function (g) {
-            return g && (String(g.id || '').indexOf('sanyi') === 0
-              || String(g.name || '').indexOf('三役') >= 0
-              || g.isSanyi === true || g.sanyi === true);
-          };
-          protectedGroupIds = groups.filter(isSanyiGroup).map(function (g) { return String(g.id || ''); });
-          data.system_group_dms = JSON.stringify(groups.filter(function (g) { return !isSanyiGroup(g); }));
-        }
-      } catch (e) {}
+    const groups = JSON.parse(data.system_group_dms || '[]');
+    (Array.isArray(groups) ? groups : []).forEach(function (g) {
+      if (g && (g.isSanyi || g.sanyi || String(g.id || '').indexOf('sanyi') === 0)) protectedGroupIds.push(String(g.id || ''));
+    });
+    if (!isSanyiMember) {
+      data.system_group_dms = JSON.stringify((Array.isArray(groups) ? groups : []).filter(function (g) {
+        return !(g && (g.isSanyi || g.sanyi || String(g.id || '').indexOf('sanyi') === 0));
+      }));
     }
   } catch (e) {}
-
-  if (!session || session.isMaker) return data;
-
   if (data.system_messages) {
     try {
-      const messages = JSON.parse(data.system_messages);
-      data.system_messages = JSON.stringify(messages.filter(m =>
-        protectedGroupIds.indexOf(String(m.receiverId)) < 0 &&
-        (String(m.receiverId) === String(session.id) ||
-        String(m.senderId) === String(session.id) ||
-        String(m.receiverId) === 'ALL')
-      ));
-    } catch (e) {}
+      let messages = JSON.parse(data.system_messages);
+      if (!isSanyiMember) messages = messages.filter(function (m) {
+        const rid = String(m.receiverId || ''), sid = String(m.senderId || '');
+        return protectedGroupIds.indexOf(rid) < 0 && protectedGroupIds.indexOf(sid) < 0 && rid.indexOf('sanyi') !== 0 && sid.indexOf('sanyi') !== 0;
+      });
+      if (!isMaker) messages = messages.filter(function (m) {
+        return String(m.receiverId) === uid || String(m.senderId) === uid || String(m.receiverId) === 'ALL';
+      });
+      data.system_messages = JSON.stringify(messages);
+    } catch (e) { delete data.system_messages; }
   }
   return data;
 }
 
 function requireSession_(token) {
+  try { assertSiteAccess_(); } catch (e) { return null; }
   if (!token) return null;
   const raw = CacheService.getScriptCache().get(CONFIG.SESSION_PREFIX + String(token));
   if (!raw) return null;
@@ -1898,6 +1934,25 @@ function autoRestoreAccountsIfLost_() {
   }
 }
 
+/* ============================================================
+ * サイト内コード置き換え（デプロイ不要）用の格納API
+ * ============================================================ */
+function apiSavePendingCode(token, html, startAt, endAt) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログインしてください。');
+  if (!session.isMaker) throw new Error('作成者のみ実行できます。');
+  const code = String(html || '');
+  if (code.length < 5000) throw new Error('コードが短すぎます（HTML全文を貼り付けてください）。');
+  if (code.length > CONFIG.MAX_VALUE_CHARS) throw new Error('コードが大きすぎます。分割せず1ファイルにしてください。');
+  const version = 'v' + new Date().getTime();
+  const payload = { html: code, startAt: String(startAt || ''), endAt: String(endAt || ''), version: version, savedAt: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss') };
+  writeData_('system_pending_code', payload);
+  bumpRev_('system_pending_code');
+  // 直前の名簿を退避（置き換え時の消失防止）
+  try { const accs = readData_('system_accounts', []); if (Array.isArray(accs) && accs.length) saveAccountsBackup_(accs); } catch (e) {}
+  return { ok: true, version: version, startAt: payload.startAt };
+}
+
 /** アカウント削除（明示操作のみ）。作成者＝全員／顧問＝部員のみ削除可 */
 function apiDeleteAccount(token, targetId) {
   const session = requireSession_(token);
@@ -1919,6 +1974,156 @@ function apiDeleteAccount(token, targetId) {
   return { ok: true, deleted: id, remaining: next.length };
 }
 
+
+/* ============================================================
+ * 出欠集計・お知らせ既読確認・名簿一括更新（第6段階）
+ * ============================================================ */
+function apiGetAttendanceSummary(token) {
+  const session = requireSession_(token);
+  if (!session || (!session.isMaker && !session.isAdvisor)) throw new Error('出欠集計は作成者・顧問のみ閲覧できます。');
+  const practices = readData_('system_practices', []);
+  const accounts = readData_('system_accounts', []);
+  const notices = readData_('system_attendance', []);
+  const sanyi = readData_('system_sanyi_data', {}) || {};
+  const sanyiIds = [sanyi.captainId, sanyi.vice1Id, sanyi.vice2Id].map(String);
+  const ps = (Array.isArray(practices) ? practices : []).filter(pr => pr && pr.date);
+  const as = (Array.isArray(accounts) ? accounts : []).filter(a => a && !a.isAdvisor && !a.isTreasurer && String(a.grade || '') !== '卒業' && String(a.status || 'active') === 'active');
+  const ns = Array.isArray(notices) ? notices : [];
+  const gradeNum = g => { const m = String(g || '').match(/[0-9]+/); return m ? Number(m[0]) : 0; };
+  const afterSummer = d => { const m = Number(String(d || '').slice(5,7)), day = Number(String(d || '').slice(8,10)); return (m === 7 && day >= 10) || m > 7 || m <= 3; };
+  const rows = as.map(a => {
+    const third = gradeNum(a.grade) === 3;
+    const counted = third ? ps.filter(pr => !afterSummer(pr.date)) : ps;
+    const attended = counted.filter(pr => (pr.attendedMembers || []).indexOf(a.name) >= 0).length;
+    const excused = counted.filter(pr => (pr.attendedMembers || []).indexOf(a.name) < 0 && ns.some(n => n && String(n.name || '') === String(a.name) && String(n.status || '') === '欠席' && String(n.dateKey || '').slice(0,10) === String(pr.date || '').slice(0,10))).length;
+    const denom = Math.max(0, counted.length - excused);
+    return { id:String(a.id), name:String(a.name || ''), grade:String(a.grade || ''), total:counted.length, attended:attended, excused:excused, absent:Math.max(0,denom-attended), rate:denom ? Math.round(attended/denom*1000)/10 : 100, isSanyi:sanyiIds.indexOf(String(a.id)) >= 0 };
+  });
+  return { ok:true, practiceCount:ps.length, members:rows, averageRate:rows.length ? Math.round(rows.reduce((n,x)=>n+x.rate,0)/rows.length*10)/10 : 0 };
+}
+
+function noticeReadId_(message) {
+  return String(message && (message.id || (String(message.senderId || '') + '|' + String(message.date || '') + '|' + String(message.content || '').slice(0,40))) || '');
+}
+function apiMarkNoticesRead(token, jsonIds) {
+  const session = requireSession_(token);
+  if (!session) throw new Error('ログインしてください。');
+  let ids; try { ids = JSON.parse(String(jsonIds || '[]')); } catch(e) { throw new Error('既読情報の形式が正しくありません。'); }
+  if (!Array.isArray(ids)) throw new Error('既読情報の形式が正しくありません。');
+  const wanted = {};
+  ids.slice(0,100).forEach(x => { const v=String(x || '').replace(/^msg_/, ''); if(v) wanted[v]=true; });
+  const messages = readData_('system_messages', []);
+  const valid = (Array.isArray(messages)?messages:[]).filter(m => m && m.isOfficial && (String(m.receiverId) === 'ALL' || String(m.receiverId) === String(session.id)) && wanted[noticeReadId_(m)]);
+  if (!valid.length) return {ok:true, marked:0};
+  const reads = readData_('system_notice_reads', []);
+  const arr = Array.isArray(reads) ? reads : [];
+  const existing = {};
+  arr.forEach(x => { existing[String(x.messageId)+'|'+String(x.userId)] = true; });
+  const account = (readData_('system_accounts', []) || []).find(a => String(a.id) === String(session.id));
+  const now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+  valid.forEach(m => {
+    const mid = noticeReadId_(m), k = mid+'|'+String(session.id);
+    if (!existing[k]) { arr.push({messageId:mid,userId:String(session.id),userName:String(account && account.name || ''),at:now}); existing[k]=true; }
+  });
+  while(arr.length>12000) arr.shift();
+  writeData_('system_notice_reads', arr);
+  return {ok:true,marked:valid.length};
+}
+function apiListNoticeReadStatus(token, limit) {
+  const session = requireSession_(token);
+  if (!session || (!session.isMaker && !session.isAdvisor)) throw new Error('既読状況は作成者・顧問のみ閲覧できます。');
+  const messages = readData_('system_messages', []), reads = readData_('system_notice_reads', []), accounts = readData_('system_accounts', []);
+  const all = Array.isArray(messages)?messages:[], rs = Array.isArray(reads)?reads:[];
+  const members = (Array.isArray(accounts)?accounts:[]).filter(a=>a && !a.isAdvisor && !a.isMaker && String(a.grade||'')!=='卒業' && String(a.status||'active')==='active');
+  const n = Math.min(Math.max(Number(limit)||30,1),100);
+  const notices = all.filter(m=>m && m.isOfficial && String(m.receiverId)==='ALL').slice().reverse().slice(0,n).map(m=>{
+    const id=noticeReadId_(m), seen=rs.filter(r=>String(r.messageId)===id), seenIds={}; seen.forEach(r=>seenIds[String(r.userId)]=true);
+    const unread=members.filter(a=>!seenIds[String(a.id)]).map(a=>({id:String(a.id),name:String(a.name||'')}));
+    return {id:id,title:String(m.senderName||'公式お知らせ'),date:String(m.date||''),content:String(m.content||'').slice(0,240),readCount:members.length-unread.length,total:members.length,unread:unread};
+  });
+  return {ok:true,notices:notices};
+}
+
+/** ID,学年,クラス,状態 のCSV相当JSONで既存部員を一括更新。パスワード等は維持する。 */
+function apiBulkUpdateAccounts(token, jsonRows) {
+  const session = requireSession_(token);
+  if (!session || (!session.isMaker && !session.isAdvisor)) throw new Error('名簿一括更新は作成者・顧問のみ実行できます。');
+  let rows; try { rows=JSON.parse(String(jsonRows||'[]')); } catch(e) { throw new Error('更新データの形式が正しくありません。'); }
+  if (!Array.isArray(rows) || !rows.length || rows.length>500) throw new Error('更新対象は1〜500件にしてください。');
+  const accounts=readData_('system_accounts',[]), byId={}; accounts.forEach(a=>byId[String(a.id)]=a);
+  const seen={}, updated=[], skipped=[];
+  rows.forEach((r,i)=>{
+    const id=String(r.id||'').trim(); if(!id){skipped.push({line:i+1,reason:'IDなし'});return;}
+    if(seen[id]){skipped.push({line:i+1,reason:'ID重複'});return;} seen[id]=true;
+    const a=byId[id]; if(!a){skipped.push({line:i+1,reason:'該当IDなし'});return;}
+    if(a.isMaker || a.isAdvisor && !session.isMaker){skipped.push({line:i+1,reason:'権限上変更不可'});return;}
+    const before=[a.grade||'',a.class||'',a.status||'active'].join('|');
+    const requestedStatus = String(r.status || '').trim();
+    if(requestedStatus && !['active','retired','graduated','left'].includes(requestedStatus)){skipped.push({line:i+1,reason:'状態値が不正'});return;}
+    if(r.grade!==undefined && String(r.grade).trim()) a.grade=String(r.grade).trim().slice(0,20);
+    if(r.class!==undefined) a.class=String(r.class||'').trim().slice(0,30);
+    if(requestedStatus) a.status=requestedStatus;
+    const after=[a.grade||'',a.class||'',a.status||'active'].join('|');
+    if(before!==after) updated.push({id:id,name:String(a.name||''),before:before,after:after});
+  });
+  if(updated.length){writeData_('system_accounts',accounts);saveAccountsBackup_(accounts);bumpRev_('system_accounts');appendAudit_(session.id,'部員情報を一括更新','system_accounts',updated.length+'件更新 / '+skipped.length+'件スキップ');}
+  return {ok:true,updated:updated,skipped:skipped,total:updated.length};
+}
+
+
+
+/** 作成者専用：全員のDM履歴（通常DM・三役グループDMを含む） */
+function apiGetCreatorDmHistory(token, limit) {
+  const session = requireSession_(token);
+  if (!session || !session.isMaker) throw new Error('全員のDM履歴を閲覧できるのは作成者のみです。');
+  const accounts = readData_('system_accounts', []);
+  const nameById = {};
+  (Array.isArray(accounts) ? accounts : []).forEach(a => { if (a) nameById[String(a.id)] = String(a.name || '名前未設定'); });
+  const messages = readData_('system_messages', []);
+  const list = Array.isArray(messages) ? messages : [];
+  const n = Math.min(Math.max(Number(limit) || 600, 1), 2000);
+  const entries = list.slice(-n).reverse().map(m => ({
+    id: String(m.id || ''),
+    date: String(m.date || m.createdAt || ''),
+    senderId: String(m.senderId || ''),
+    senderName: String(m.senderName || nameById[String(m.senderId || '')] || '不明'),
+    receiverId: String(m.receiverId || ''),
+    receiverName: String(m.receiverName || (String(m.receiverId || '') === 'ALL' ? '全体' : (nameById[String(m.receiverId || '')] || '不明'))),
+    content: String(m.content || ''),
+    isOfficial: !!m.isOfficial,
+    isGroup: !!(m.isGroup || m.groupId || String(m.receiverId || '').indexOf('sanyi') === 0),
+    attachName: String(m.attachName || m.attachmentName || '')
+  }));
+  return { ok: true, total: list.length, entries: entries };
+}
+
+/** 作成者専用：指定した活動データだけを削除。実行前に必ず全体バックアップを作成する。 */
+function apiCreatorClearDataset(token, dataKey) {
+  const session = requireSession_(token);
+  if (!session || !session.isMaker) throw new Error('データ削除は作成者のみ実行できます。');
+  const allowed = {
+    system_tournaments: '大会結果',
+    system_exams: '審査結果・審査記録',
+    system_practices: '稽古記録',
+    system_attendance: '出欠連絡',
+    system_schedule_events: '大会・稽古などの予定',
+    system_yearly_plans: '年間予定',
+    system_meetings: '会議記録',
+    system_handover_docs: '引き継ぎ資料',
+    system_toinkai_docs: '桐蔭会原稿',
+    system_accounting_docs: '会計書類',
+    system_monthly_reports: '月次出席レポート',
+    system_group_dms: 'グループDM履歴'
+  };
+  const key = String(dataKey || '');
+  if (!Object.prototype.hasOwnProperty.call(allowed, key)) throw new Error('このデータは削除対象にできません。');
+  // 削除前の全データをDriveへ退避。バックアップに失敗した場合は削除しない。
+  const backup = createClubBackup_('pre-delete', session.id);
+  writeRawData_(key, '[]');
+  const rev = bumpRev_(key);
+  appendAudit_(session.id, 'データを削除', allowed[key], '対象キー:' + key + ' / 削除前バックアップ:' + String(backup && backup.name || '作成済み'));
+  return { ok: true, key: key, label: allowed[key], rev: rev, backupName: String(backup && backup.name || '') };
+}
 
 /* ============================================================
  * 監査ログ / 退部フラグ / 名簿CSV一括登録
@@ -1951,14 +2156,16 @@ function appendAudit_(actorId, action, target, detail) {
   } catch (e) { return false; }
 }
 
-function apiListAuditLog(token, limit) {
+function apiListAuditLog(token, limit, actorId) {
   const session = requireSession_(token);
   if (!session) throw new Error('ログインしてください。');
   if (!session.isMaker && !session.isAdvisor) throw new Error('監査ログを閲覧する権限がありません。');
   const n = Math.min(Math.max(Number(limit) || 200, 1), AUDIT_MAX);
   const list = readData_('system_audit_log', []);
   const arr = Array.isArray(list) ? list : [];
-  return { ok: true, total: arr.length, entries: arr.slice(-n).reverse() };
+  const filterId = String(actorId || '').trim();
+  const filtered = filterId ? arr.filter(x => String(x.actorId || '') === filterId) : arr;
+  return { ok: true, total: filtered.length, entries: filtered.slice(-n).reverse(), filteredActorId: filterId };
 }
 
 function apiClearAuditLog(token) {
@@ -2077,6 +2284,7 @@ function apiBulkRegisterAccounts(token, jsonRows) {
   return { ok: true, created: created, skipped: skipped, total: accounts.length };
 }
 
+
 /* ===== 2026年度限定：桐蔭会原稿・三役引継ぎ資料のリマインド停止 ===== */
 const DOC_REMINDER_EXEMPT_FISCAL_YEARS = [2026];
 function currentFiscalYearForNotice_() {
@@ -2087,6 +2295,8 @@ function isDocReminderSuppressed_(text) {
   if (DOC_REMINDER_EXEMPT_FISCAL_YEARS.indexOf(currentFiscalYearForNotice_()) < 0) return false;
   return /桐蔭会|原稿|引継ぎ資料|引き継ぎ資料|雑誌/.test(String(text || ''));
 }
+
+
 
 
 /** 旧主将（原稿提出のみ）の指定・解除。作成者のみ */
@@ -2164,16 +2374,8 @@ function verifyAdminToolCredentials(token, tool, id, password) {
     return { ok: false, message: '専用IDまたはパスワードが正しくありません。' };
   }
   cache.remove(failKey);
-  try { cache.put('ADMTOOL_' + key + '_' + String(session.id), '1', 1800); } catch (e) {}
   appendAudit_(session.id, '管理者ツール認証', key, '');
   return { ok: true, tool: key };
-}
-
-/** 管理者ツールの専用ID認証が有効か（30分） */
-function isAdminToolUnlocked_(tool, userId) {
-  try {
-    return CacheService.getScriptCache().get('ADMTOOL_' + String(tool) + '_' + String(userId)) === '1';
-  } catch (e) { return false; }
 }
 
 
@@ -2217,6 +2419,7 @@ function resetAllAccountsForRebuild(keepMakerId) {
     lock.releaseLock();
   }
 }
+
 
 /** resetAllAccountsForRebuild の直前に戻す */
 function restoreAccountsAfterReset() {
@@ -2405,43 +2608,30 @@ function verifyMakerBootstrapPasscode(pass) {
   }
 }
 
-
-/** 顧問へ公式メッセージを送る（三役引継ぎ・会計引継ぎなどで使用） */
-function notifyAdvisors(body, title) {
-  try {
-    const accounts = readData_('system_accounts', []);
-    const advisors = (accounts || []).filter(function (a) {
-      return a && a.isAdvisor && String(a.status || 'active') === 'active';
-    });
-    if (!advisors.length) return { ok: false, sent: 0 };
-    const msgs = readData_('system_messages', []);
-    const arr = Array.isArray(msgs) ? msgs : [];
-    const at = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
-    advisors.forEach(function (a) {
-      arr.unshift({
-        id: 'msg_' + Date.now() + '_official',
-        senderId: 'official',
-        senderName: String(title || '【公式】築附中学剣道部'),
-        receiverId: String(a.id),
-        content: String(body || ''),
-        date: at,
-        isOfficial: true
-      });
-    });
-    writeData_('system_messages', arr);
-    bumpRev_('system_messages');
-    return { ok: true, sent: advisors.length };
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
-}
-
-
 /* ============================================================
  * 運営（作成者）から個人への個別連絡
  *  - 画面ではなくサーバー側で「作成者セッション」を検証する
  *  - 送信は公式（運営）名義のメッセージとして保存する
  * ============================================================ */
+function messageFingerprint_(m) {
+  return [m && m.senderId, m && m.receiverId, m && m.date, m && m.content].map(x => String(x == null ? '' : x)).join('\u001f');
+}
+function attendanceFingerprint_(x) {
+  return [x && x.name, x && x.status, x && x.dateKey, x && x.date, x && x.leaveTime, x && x.remark].map(v => String(v == null ? '' : v)).join('\u001f');
+}
+function notifyStaffOfMemberDm_(session, message) {
+  const accounts = readData_('system_accounts', []);
+  const list = Array.isArray(accounts) ? accounts : [];
+  const recipients = list.filter(a => a && (a.isMaker || a.isAdvisor) && String(a.id) !== String(session.id));
+  if (!recipients.length) return;
+  const receiver = list.find(a => a && String(a.id) === String(message.receiverId));
+  const sender = list.find(a => a && String(a.id) === String(session.id));
+  const senderName = String((sender && sender.name) || session.id);
+  const receiverName = String((receiver && receiver.name) || message.receiverId || '不明');
+  const excerpt = String(message.content || '').replace(/\s+/g, ' ').slice(0,160);
+  recipients.forEach(a => pushClubMessage_(String(a.id), '【部員からの個別DM】\n' + senderName + ' さんから ' + receiverName + ' さんへのメッセージが送信されました。\n内容：' + excerpt, 'official_system', '📩 システム通知', { isOfficial:true, isDmAlert:true, sourceMessageId:String(message.id || '') }));
+}
+
 function pushClubMessage_(receiverId, content, senderId, senderName, extra) {
   const raw = readData_('system_messages', []);
   const list = Array.isArray(raw) ? raw.slice() : [];
@@ -2641,6 +2831,9 @@ function isViceSession_(session) {
 function apiMonthlyReportStatus(token) {
   const session = requireSession_(token);
   if (!session) return { ok: false, message: 'ログイン期限が切れました。再ログインしてください。' };
+  if (!(session.isMaker || session.isAdvisor || session.isCaptain || isViceSession_(session))) {
+    return { ok: false, message: '副将・主将・顧問・作成者のみ閲覧できます。' };
+  }
   const raw = readData_('system_monthly_reports', []);
   const list = (Array.isArray(raw) ? raw.slice() : []).sort(function (a, b) {
     return String((b && b.monthKey) || '').localeCompare(String((a && a.monthKey) || ''));
@@ -2769,4 +2962,354 @@ function testGenerateCurrentMonthReport() {
   const item = ensureMonthlyReport_(p.y, p.m);
   Logger.log('生成: ' + item.monthKey + ' / ' + item.fileName + ' / ' + item.fileId);
   return item;
+}
+
+/* ============================================================
+ * Google Drive 日次バックアップ / 復元
+ * ============================================================ */
+function getBackupFolder_() {
+  const props = PropertiesService.getScriptProperties();
+  let id = props.getProperty('CLUB_BACKUP_FOLDER_ID');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) {} }
+  const folder = DriveApp.createFolder('部活動管理システム バックアップ（非公開）');
+  props.setProperty('CLUB_BACKUP_FOLDER_ID', folder.getId());
+  return folder;
+}
+
+function createClubBackup_(reason, actorId) {
+  const data = readAllData_();
+  const payload = {
+    format: 'club-system-backup-v1',
+    createdAt: Utilities.formatDate(new Date(), 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ssXXX"),
+    reason: String(reason || 'manual'),
+    data: data
+  };
+  const json = JSON.stringify(payload);
+  const stamp = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd_HHmmss');
+  const file = getBackupFolder_().createFile('club_backup_' + stamp + '.json', json, MimeType.JSON);
+  file.setDescription('部活動管理システムの自動・手動バックアップ。削除・共有設定変更をしないでください。');
+  // 直近60件を保持。古いものだけ削除
+  const files = [];
+  const it = getBackupFolder_().getFiles();
+  while (it.hasNext()) files.push(it.next());
+  files.sort((a,b) => b.getDateCreated().getTime() - a.getDateCreated().getTime());
+  files.slice(60).forEach(f => f.setTrashed(true));
+  if (actorId) { try { appendAudit_(actorId, 'バックアップを作成', file.getId(), String(reason || '手動')); } catch (e) {} }
+  return { ok: true, fileId: file.getId(), name: file.getName(), createdAt: payload.createdAt };
+}
+
+function runDailyClubBackup() {
+  return createClubBackup_('daily-auto', 'system');
+}
+
+function installDailyClubBackupTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.filter(t => t.getHandlerFunction() === 'runDailyClubBackup').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('runDailyClubBackup').timeBased().everyDays(1).atHour(3).create();
+  return true;
+}
+
+function apiCreateClubBackup(token) {
+  const session = requireSession_(token);
+  if (!session || !session.isMaker) throw new Error('バックアップ作成は作成者のみ実行できます。');
+  return createClubBackup_('manual', session.id);
+}
+
+function apiListClubBackups(token) {
+  const session = requireSession_(token);
+  if (!session || !session.isMaker) throw new Error('バックアップ一覧は作成者のみ閲覧できます。');
+  const out = [];
+  const it = getBackupFolder_().getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    if (!/\.json$/i.test(f.getName())) continue;
+    out.push({ id: f.getId(), name: f.getName(), createdAt: Utilities.formatDate(f.getDateCreated(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'), size: f.getSize() });
+  }
+  out.sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+  return { ok: true, backups: out.slice(0,60) };
+}
+
+function apiRestoreClubBackup(token, fileId) {
+  const session = requireSession_(token);
+  if (!session || !session.isMaker) throw new Error('バックアップ復元は作成者のみ実行できます。');
+  const id = String(fileId || '').trim();
+  if (!id) throw new Error('復元するバックアップを選択してください。');
+  const folder = getBackupFolder_();
+  const file = DriveApp.getFileById(id);
+  // バックアップ専用フォルダ内のファイルか確認
+  let inFolder = false;
+  const parents = file.getParents();
+  while (parents.hasNext()) if (parents.next().getId() === folder.getId()) inFolder = true;
+  if (!inFolder || file.isTrashed()) throw new Error('指定されたファイルは有効なバックアップではありません。');
+  // 復元直前の状態を自動退避
+  createClubBackup_('pre-restore-safety', session.id);
+  let payload;
+  try { payload = JSON.parse(file.getBlob().getDataAsString('UTF-8')); }
+  catch (e) { throw new Error('バックアップファイルを読み込めません。'); }
+  if (!payload || payload.format !== 'club-system-backup-v1' || !payload.data || typeof payload.data !== 'object') {
+    throw new Error('バックアップ形式が対応していません。');
+  }
+  const data = payload.data;
+  Object.keys(data).forEach(key => {
+    if (!/^system_[a-zA-Z0-9_]+$/.test(key)) return;
+    writeRawData_(key, String(data[key] == null ? '' : data[key]));
+    bumpRev_(key);
+  });
+  appendAudit_(session.id, 'バックアップから復元', file.getName(), '復元前の状態も自動バックアップ済み');
+  return { ok: true, message: 'バックアップを復元しました。画面を再読み込みしてください。', restoredAt: payload.createdAt };
+}
+
+/* ============================================================
+ * 年度予定（画像/PDF）から テスト・学芸発表会・運動会 を抽出
+ *  - 抽出結果は「1週間前から通常稽古オフ」の自動設定に使う
+ *  - 3年生だけテストが早い場合は gradeScope:'3' を返す
+ * ============================================================ */
+function apiExtractYearlyEvents(base64, fileName, mimeType, year, token) {
+  const session = requireSession_(token);
+  if (!session) return { ok: false, message: 'ログインしてください。' };
+  if (!(session.isMaker || session.isAdvisor || session.isCaptain)) {
+    return { ok: false, message: '顧問・主将・作成者のみ実行できます。' };
+  }
+  const y = Number(year) || jstParts_().y;
+  let text = '';
+  try {
+    const gem = geminiReadEvents_(base64, mimeType, y);
+    if (gem) text = gem;
+  } catch (e) {}
+  if (!text) {
+    try { text = ocrTextFromBlob_(base64, fileName, mimeType) || ''; } catch (e) { text = ''; }
+  }
+  if (!text) return { ok: false, message: '年度予定を読み取れませんでした（OCR/Geminiキー未設定の可能性）。手入力で登録してください。' };
+  const events = parseYearlyEventsText_(text, y);
+  return { ok: true, events: events, source: String(text).slice(0, 400) };
+}
+
+function geminiReadEvents_(base64, mimeType, year) {
+  const key = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!key || !base64 || String(base64).length > 5500000) return '';
+  const prompt = String(year) + '年度の年間行事予定から「テスト（定期考査・期末・中間など）」「学芸発表会」「運動会」の日程だけを抜き出し、JSONのみで返してください。'
+    + '学年ごとに日程が違う場合は gradeScope を "3" にしてください。'
+    + '形式: {"events":[{"kind":"test","title":"期末テスト","start":"6/25","end":"6/27","gradeScope":"all"}]}'
+    + ' kind は test / gakugei / undoukai のいずれか。見つからない項目は省いてください。';
+  const models = [];
+  const configured = PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL') || '';
+  [configured, 'gemini-2.5-flash', 'gemini-2.0-flash'].forEach(function (m) { if (m && models.indexOf(m) < 0) models.push(m); });
+  for (let i = 0; i < models.length; i++) {
+    try {
+      const res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(models[i]) + ':generateContent', {
+        method: 'post', contentType: 'application/json',
+        headers: { 'x-goog-api-key': String(key) },
+        payload: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType || 'image/png', data: base64 } }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 600 }
+        }),
+        muteHttpExceptions: true
+      });
+      if (res.getResponseCode() !== 200) continue;
+      const body = JSON.parse(res.getContentText());
+      const parts = (((body.candidates || [])[0] || {}).content || {}).parts || [];
+      const txt = (parts[0] || {}).text || '';
+      if (txt) return txt;
+    } catch (e) {}
+  }
+  return '';
+}
+
+/** 抽出テキストを行単位で解析してイベント配列にする */
+function parseYearlyEventsText_(text, year) {
+  const src = String(text || '');
+  const y = Number(year) || jstParts_().y;
+  const out = [];
+  const push = function (kind, title, md, endMd, scope) {
+    const s = toISODate_(title, md, y, false);
+    if (!s) return;
+    const e = endMd ? toISODate_(title, endMd, y, true) : '';
+    out.push({ kind: kind, title: title, startDate: s, endDate: e && e >= s ? e : '', gradeScope: scope || 'all' });
+  };
+  const lines = src.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean);
+  const mdRe = /([0-9]{1,2})\s*[\/月]\s*([0-9]{1,2})/g;
+  lines.forEach(function (line) {
+    let kind = '';
+    if (/学芸\s*発表会|学芸発表/.test(line)) kind = 'gakugei';
+    else if (/運動会|体育祭/.test(line)) kind = 'undoukai';
+    else if (/テスト|考査|中間|期末|実力/.test(line)) kind = 'test';
+    if (!kind) return;
+    const mds = [];
+    let m;
+    mdRe.lastIndex = 0;
+    while ((m = mdRe.exec(line)) !== null) mds.push(m[1] + '/' + m[2]);
+    if (!mds.length) return;
+    const scope = /3\s*年|三年/.test(line) ? '3' : 'all';
+    push(kind, line.replace(/[0-9]{1,2}\s*[\/月]\s*[0-9]{1,2}日?/g, '').slice(0, 30) || kind, mds[0], mds[1], scope);
+  });
+  // JSONで返ってきた場合にも対応
+  try {
+    const jm = src.match(/\{[\s\S]*\}/);
+    if (jm) {
+      const j = JSON.parse(jm[0]);
+      (j.events || []).forEach(function (ev) {
+        if (!ev || !ev.start) return;
+        const s = toISODate_(String(ev.title || ''), String(ev.start), y, false);
+        const e = ev.end ? toISODate_(String(ev.title || ''), String(ev.end), y, true) : '';
+        if (!s) return;
+        const kind = (ev.kind === 'gakugei' || ev.kind === 'undoukai') ? ev.kind : 'test';
+        const dup = out.some(function (o) { return o.kind === kind && o.startDate === s; });
+        if (dup) return;
+        out.push({ kind: kind, title: String(ev.title || kind), startDate: s, endDate: e && e >= s ? e : '', gradeScope: String(ev.gradeScope || 'all') === '3' ? '3' : 'all' });
+      });
+    }
+  } catch (e) {}
+  return out;
+}
+
+/** 添付ファイルを非公開フォルダから削除（会計データ整理用） */
+function apiDeleteProtectedFile(fileId, token) {
+  const session = requireSession_(token);
+  if (!session) return { ok: false, message: 'ログインしてください。' };
+  if (!(session.isMaker || session.isAdvisor || session.isTreasurer)) {
+    return { ok: false, message: '削除は会計・顧問・作成者のみ実行できます。' };
+  }
+  const id = String(fileId || '');
+  if (!id) return { ok: false, message: 'ファイルIDがありません。' };
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const allowedFolders = [props.getProperty('CLUB_ATTACHMENT_FOLDER_ID'), props.getProperty('CLUB_MANUAL_FOLDER_ID')].filter(Boolean);
+    const file = DriveApp.getFileById(id);
+    let allowed = false;
+    const parents = file.getParents();
+    while (parents.hasNext()) {
+      if (allowedFolders.indexOf(parents.next().getId()) >= 0) { allowed = true; break; }
+    }
+    if (!allowed) return { ok: false, message: 'このファイルを削除する権限がありません。' };
+    file.setTrashed(true);
+    try { appendAudit_(session.id, '添付ファイル削除', id, ''); } catch (e) {}
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: 'ファイルを削除できませんでした: ' + ((e && e.message) || e) };
+  }
+}
+
+
+/* ============================================================
+ * 【復元ブロック】貼付の途中で欠落していた関数を旧版から逐語復元
+ * （新規登録UI・通知が無いと画面が動かないため）
+ * ============================================================ */
+
+/** 登録画面用：登録済みアカウントの有無と、ログイン中ユーザーの登録権限をサーバー側で確認 */
+function getClubRegistrationStatus(token) {
+  const accounts = readData_('system_accounts', []);
+  const safeAccounts = Array.isArray(accounts) ? accounts : [];
+  const session = requireSession_(token);
+  const isMaker = !!(session && session.isMaker);
+  return {
+    ok: true,
+    hasAccounts: safeAccounts.length > 0,
+    accountCount: safeAccounts.length,
+    isMaker: isMaker,
+    // 作成者がログイン中の場合だけ、ID採番用に公開アカウント情報を返す
+    accounts: isMaker ? safeAccounts.map(publicAccount_) : []
+  };
+}
+
+/** 初期パスワード生成（Pass＋3桁の数字） */
+function makeSelfRegPassword_() {
+  return 'Pass@' + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+}
+
+/** 公開登録：部員本人が自分の一般アカウントを作成する。作成者・顧問権限は付与しない。
+ *  kind に「顧問」を指定すると顧問アカウント（IDは000001／000002、最大2名）を作成する。
+ *  初期パスワードは入力させず、サーバー側で「Pass＋3桁の数字」を自動生成し、戻り値で1回だけ返す。 */
+function selfRegisterClubMember(name, grade, className, gender, kind) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    name = String(name || '').replace(/[\u3000\s]+/g, ' ').trim();
+    grade = String(grade == null ? '' : grade).trim();
+    className = String(className || '').trim();
+    gender = String(gender || '').trim();
+    kind = String(kind || '部員').trim();
+    const isAdvisor = (kind === '顧問');
+    if (!name || name.length > 80) throw new Error('氏名を正しく入力してください。');
+    if (!gender) throw new Error('性別を選択してください。');
+    if (!isAdvisor) {
+      grade = Number(grade);
+      if (![1, 2, 3].includes(grade)) throw new Error('学年の指定が正しくありません。');
+      if (!/^[1-5]組$/.test(className)) throw new Error('クラスの指定が正しくありません。');
+    }
+
+    const accounts = readData_('system_accounts', []);
+    if (!Array.isArray(accounts) || accounts.length === 0) throw new Error('システムの初期設定が未完了です。作成者の登録後にお試しください。');
+    if (accounts.some(a => String(a.name || '').replace(/\s+/g, '') === name.replace(/\s+/g, '') && String(a.status || 'active') === 'active')) {
+      throw new Error('同じ氏名のアカウントが既に登録されています。顧問または作成者に確認してください。');
+    }
+
+    const password = makeSelfRegPassword_();
+    const now = new Date();
+    let id = '';
+    const user = {
+      id: '', name: name, isAdvisor: isAdvisor, isMaker: false,
+      role: isAdvisor ? '顧問' : '一般',
+      grade: isAdvisor ? '顧問' : String(grade), class: isAdvisor ? '' : className,
+      gender: gender,
+      joinedAt: now.toISOString(), createdAt: now.toISOString(), status: 'active'
+    };
+
+    if (isAdvisor) {
+      const used = accounts.filter(a => a && a.isAdvisor).map(a => Number(a.id)).filter(n => !isNaN(n));
+      let n = 1;
+      while (used.indexOf(n) >= 0 && n <= 2) n++;
+      if (n > 2) throw new Error('顧問アカウントは2名までです（000001／000002）。');
+      id = String(n).padStart(6, '0');
+    } else {
+      const fy = Number(Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy')) - (Number(Utilities.formatDate(now, 'Asia/Tokyo', 'M')) < 4 ? 1 : 0);
+      const entryYear = fy - (grade - 1);
+      const seq = nextMemberSeq_(accounts, entryYear);
+      if (seq > 99) throw new Error('この代の登録上限（99名）に達しています。');
+      id = String(entryYear % 100).padStart(2, '0') + String(kiseiOfEntryYear_(entryYear)).padStart(2, '0') + String(seq).padStart(2, '0');
+      user.entryYear = entryYear;
+      user.kisei = String(kiseiOfEntryYear_(entryYear));
+    }
+    if (accounts.some(a => String(a.id) === id)) throw new Error('IDの採番が重複しました。もう一度登録してください。');
+    user.id = id;
+
+    setAccountPassword_(user, password);
+    accounts.push(user);
+    writeData_('system_accounts', accounts);
+    saveAccountsBackup_(accounts);
+    bumpRev_('system_accounts');
+    try { appendAudit_('self-registration', '本人による登録', id, name); } catch (e) {}
+    return { ok: true, id: id, name: name, kind: kind, password: password, user: publicAccount_(user), total: accounts.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** 顧問へ公式メッセージを送る（三役引継ぎ・会計引継ぎなどで使用） */
+function notifyAdvisors(body, title) {
+  try {
+    const accounts = readData_('system_accounts', []);
+    const advisors = (accounts || []).filter(function (a) {
+      return a && a.isAdvisor && String(a.status || 'active') === 'active';
+    });
+    if (!advisors.length) return { ok: false, sent: 0 };
+    const msgs = readData_('system_messages', []);
+    const arr = Array.isArray(msgs) ? msgs : [];
+    const at = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+    advisors.forEach(function (a) {
+      arr.unshift({
+        id: 'msg_' + Date.now() + '_official',
+        senderId: 'official',
+        senderName: String(title || '【公式】筑附中学剣道部'),
+        receiverId: String(a.id),
+        content: String(body || ''),
+        date: at,
+        isOfficial: true
+      });
+    });
+    writeData_('system_messages', arr);
+    bumpRev_('system_messages');
+    return { ok: true, sent: advisors.length };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
 }
